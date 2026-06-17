@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "openai/gpt-4o-mini",
+  "agent": {
+    "k2so": {
+      "mode": "primary",
+      "description": "K-2SO background companion",
+      "prompt": "You are K-2SO, a direct background assistant. Complete the user's task using available tools. Write reports to the task workspace when asked."
+    }
+  }
+}

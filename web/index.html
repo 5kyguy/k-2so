@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>K-2SO</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --panel: #171a21;
+        --text: #e8eaed;
+        --muted: #9aa0a6;
+        --accent: #7eb8da;
+        --ok: #6fbf8a;
+        --warn: #e0b060;
+        --err: #e07070;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+      }
+      header {
+        padding: 1rem 1.5rem;
+        border-bottom: 1px solid #252830;
+        display: flex;
+        align-items: baseline;
+        gap: 0.75rem;
+      }
+      header h1 { margin: 0; font-size: 1.25rem; }
+      header span { color: var(--muted); font-size: 0.9rem; }
+      main { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; padding: 1rem; }
+      @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+      section {
+        background: var(--panel);
+        border: 1px solid #252830;
+        border-radius: 8px;
+        padding: 1rem;
+      }
+      h2 { margin: 0 0 0.75rem; font-size: 0.95rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+      .task {
+        border: 1px solid #2a2f3a;
+        border-radius: 6px;
+        padding: 0.75rem;
+        margin-bottom: 0.5rem;
+        cursor: pointer;
+      }
+      .task:hover { border-color: var(--accent); }
+      .task.selected { border-color: var(--accent); background: #1c212b; }
+      .status { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
+      .status.queued { color: var(--muted); }
+      .status.running { color: var(--accent); }
+      .status.done { color: var(--ok); }
+      .status.failed, .status.aborted { color: var(--err); }
+      .instruction { margin-top: 0.35rem; font-size: 0.9rem; }
+      #events { font-family: ui-monospace, monospace; font-size: 0.8rem; max-height: 70vh; overflow: auto; white-space: pre-wrap; }
+      .empty { color: var(--muted); font-size: 0.9rem; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>K-2SO</h1>
+      <span>background tasks</span>
+    </header>
+    <main>
+      <section>
+        <h2>Tasks</h2>
+        <div id="tasks" class="empty">Loading…</div>
+      </section>
+      <section>
+        <h2>Activity</h2>
+        <div id="events" class="empty">Select a task</div>
+      </section>
+    </main>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

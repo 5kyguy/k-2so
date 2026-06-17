@@ -1,0 +1,34 @@
+{
+  "name": "k2so",
+  "version": "0.1.0",
+  "description": "Background task agent for your desktop — the brains to your tool layer",
+  "type": "module",
+  "bin": {
+    "k2so": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "templates",
+    "web"
+  ],
+  "scripts": {
+    "build": "tsc && node scripts/copy-assets.mjs",
+    "dev": "tsc --watch",
+    "start": "node dist/cli.js serve",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@hono/node-server": "^1.14.0",
+    "@opencode-ai/sdk": "^1.14.0",
+    "hono": "^4.7.0",
+    "smol-toml": "^1.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "typescript": "^5.8.0"
+  }
+}
