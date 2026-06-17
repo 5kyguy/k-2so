@@ -1,7 +1,9 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { K2soProfile } from "../config.js";
 import type { AgentEngine, AgentEvent, TaskRecord } from "../engine/interface.js";
+import type { BenchLogger } from "../bench.js";
+import { notifyTaskDone } from "../notify.js";
 import { TaskStore } from "./store.js";
 
 export class TaskManager {
@@ -13,6 +15,7 @@ export class TaskManager {
   constructor(
     private profile: K2soProfile,
     private engine: AgentEngine,
+    private bench?: BenchLogger,
   ) {
     this.store = new TaskStore(profile.daemon.state);
   }
@@ -52,6 +55,7 @@ export class TaskManager {
     this.store.upsert(task);
     await this.store.save();
 
+    this.bench?.markStart(id);
     this.queue.push({ taskId: id, instruction, model: opts.model, agent: opts.agent });
     void this.pump();
 
@@ -128,6 +132,19 @@ export class TaskManager {
     } else if (event.type === "error") {
       task.status = "failed";
       task.error = String((event.data as { message?: string })?.message ?? "unknown error");
+    }
+
+    const terminal = event.type === "done" || event.type === "error";
+    if (terminal) {
+      const toolCalls = task.events.filter((e) => e.type === "tool").length;
+      void this.bench?.record({
+        taskId: task.id,
+        taskType: "background",
+        totalMs: this.bench.elapsed(task.id),
+        toolCalls,
+        turns: task.events.filter((e) => e.type === "message").length,
+      });
+      notifyTaskDone(this.profile, task);
     }
 
     this.store.upsert(task);

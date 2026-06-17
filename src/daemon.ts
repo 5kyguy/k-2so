@@ -36,11 +36,11 @@ export async function startDaemon(): Promise<void> {
   await ensureOpencode(profile);
 
   const engine = new OpenCodeEngine(profile);
-  const manager = new TaskManager(profile, engine);
-  await manager.init();
-
   const bench = new BenchLogger(profile.daemon.state);
   await bench.init();
+
+  const manager = new TaskManager(profile, engine, bench);
+  await manager.init();
 
   const app = createApi(manager, webRoot());
   const host = profile.daemon.host ?? "127.0.0.1";

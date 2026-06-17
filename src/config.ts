@@ -20,6 +20,10 @@ export interface K2soProfile {
     workspace: string;
     state: string;
   };
+  notify?: {
+    enabled?: boolean;
+    command?: string;
+  };
 }
 
 const DEFAULT_PROFILE: K2soProfile = {
@@ -66,6 +70,12 @@ function normalizeProfile(raw: Partial<K2soProfile>): K2soProfile {
       workspace: expandHome(raw.daemon?.workspace ?? DEFAULT_PROFILE.daemon.workspace),
       state: expandHome(raw.daemon?.state ?? DEFAULT_PROFILE.daemon.state),
     },
+    notify: raw.notify
+      ? {
+          enabled: raw.notify.enabled ?? false,
+          command: raw.notify.command ?? "notify-send",
+        }
+      : undefined,
   };
 }
 
