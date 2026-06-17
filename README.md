@@ -34,7 +34,7 @@ k2so open   # opens the dashboard
 
 Profile path defaults to `~/.config/k2so/profile.toml`. Override with `K2SO_PROFILE`.
 
-See `templates/opencode.json` for a minimal OpenCode config to get started.
+See [`docs/OPENCODE.md`](docs/OPENCODE.md) and `templates/` for OpenCode and profile setup.
 
 ## R2-D2 integration
 

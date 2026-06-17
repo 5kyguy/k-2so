@@ -1,0 +1,19 @@
+[engine]
+type = "opencode"
+opencode_config = "~/.config/opencode/opencode.json"
+opencode_url = "http://127.0.0.1:4096"
+
+[agent]
+name = "k2so"
+default_model = "zai-coding/glm-5.2"
+
+[daemon]
+port = 4178
+host = "127.0.0.1"
+max_concurrent_tasks = 1
+workspace = "~/.local/share/k2so/workspace"
+state = "~/.local/state/k2so"
+
+[notify]
+enabled = false
+command = "notify-send"
