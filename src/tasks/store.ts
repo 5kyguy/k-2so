@@ -16,7 +16,11 @@ export class TaskStore {
       const raw = await readFile(this.indexPath, "utf8");
       const list = JSON.parse(raw) as TaskRecord[];
       for (const task of list) {
-        this.tasks.set(task.id, task);
+        this.tasks.set(task.id, {
+          ...task,
+          taskType: task.taskType ?? "background",
+          events: task.events ?? [],
+        });
       }
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
@@ -42,5 +46,9 @@ export class TaskStore {
 
   upsert(task: TaskRecord): void {
     this.tasks.set(task.id, task);
+  }
+
+  remove(id: string): void {
+    this.tasks.delete(id);
   }
 }

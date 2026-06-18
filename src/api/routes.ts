@@ -29,13 +29,19 @@ export function createApi(manager: TaskManager, webRoot: string): Hono {
   });
 
   app.post("/tasks", async (c) => {
-    const body = await c.req.json<{ instruction?: string; model?: string; agent?: string }>();
+    const body = await c.req.json<{
+      instruction?: string;
+      model?: string;
+      agent?: string;
+      taskType?: string;
+    }>();
     if (!body.instruction?.trim()) {
       return c.json({ error: "instruction required" }, 400);
     }
     const task = await manager.enqueue(body.instruction, {
       model: body.model,
       agent: body.agent,
+      taskType: body.taskType,
     });
     broadcast({ type: "task.created", task });
     return c.json(task, 202);
@@ -48,6 +54,12 @@ export function createApi(manager: TaskManager, webRoot: string): Hono {
     }
     broadcast({ type: "task.aborted", id: c.req.param("id") });
     return c.json({ ok: true });
+  });
+
+  app.post("/admin/prune", async (c) => {
+    const result = await manager.prune();
+    broadcast({ type: "tasks.pruned", ...result });
+    return c.json(result);
   });
 
   app.get("/events", (c) =>
