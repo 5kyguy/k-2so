@@ -4,10 +4,10 @@ Background task agent for your desktop. K-2SO is the brains — it plans, resear
 
 ## What it does
 
-- Accept instructions via CLI (`k2so ask "..."`) or HTTP API
+- Accept instructions via CLI (`k2so ask "..."`) over a Unix domain socket API
 - Run tasks in the background through an [OpenCode](https://opencode.ai) engine
-- Stream progress to a local web dashboard
-- Queue work with configurable concurrency limits
+- Stream progress to a local web dashboard (`k2so open` starts a short-lived HTTP bridge)
+- Queue work with configurable concurrency limits; prune old workspaces with `k2so prune`
 
 ## Requirements
 
