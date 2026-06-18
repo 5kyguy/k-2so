@@ -5,10 +5,27 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { loadProfile } from "./config.js";
 import { startDaemon } from "./daemon.js";
+import { daemonFetch } from "./client.js";
+import { startDashboardBridge } from "./dashboard-bridge.js";
 import type { TaskRecord } from "./engine/interface.js";
 import type { BenchEntry } from "./bench.js";
 
 const [, , command, ...args] = process.argv;
+
+function parseAskArgs(argv: string[]): { taskType?: string; instruction: string } {
+  let taskType: string | undefined;
+  const rest: string[] = [];
+
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--type" && argv[i + 1]) {
+      taskType = argv[++i];
+      continue;
+    }
+    rest.push(argv[i]!);
+  }
+
+  return { taskType, instruction: rest.join(" ").trim() };
+}
 
 async function main(): Promise<void> {
   switch (command) {
@@ -16,18 +33,15 @@ async function main(): Promise<void> {
       await startDaemon();
       break;
     case "ask": {
-      const instruction = args.join(" ").trim();
+      const { taskType, instruction } = parseAskArgs(args);
       if (!instruction) {
-        console.error("usage: k2so ask <instruction>");
+        console.error("usage: k2so ask [--type <id>] <instruction>");
         process.exit(1);
       }
-      const profile = await loadProfile();
-      const host = profile.daemon.host ?? "127.0.0.1";
-      const port = profile.daemon.port;
-      const res = await fetch(`http://${host}:${port}/tasks`, {
+      const res = await daemonFetch("/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instruction }),
+        body: JSON.stringify({ instruction, taskType }),
       });
       if (!res.ok) {
         const text = await res.text();
@@ -39,10 +53,7 @@ async function main(): Promise<void> {
       break;
     }
     case "status": {
-      const profile = await loadProfile();
-      const host = profile.daemon.host ?? "127.0.0.1";
-      const port = profile.daemon.port;
-      const res = await fetch(`http://${host}:${port}/tasks`);
+      const res = await daemonFetch("/tasks");
       if (!res.ok) {
         console.error("k2so: daemon not reachable — is k2so serve running?");
         process.exit(1);
@@ -57,12 +68,42 @@ async function main(): Promise<void> {
       }
       break;
     }
-    case "open": {
+    case "abort": {
+      const taskId = args[0]?.trim();
+      if (!taskId) {
+        console.error("usage: k2so abort <task-id>");
+        process.exit(1);
+      }
+      const res = await daemonFetch(`/tasks/${taskId}/abort`, { method: "POST" });
+      if (!res.ok) {
+        console.error("k2so: abort failed — task not found or not abortable");
+        process.exit(1);
+      }
+      console.log(`task ${taskId.slice(0, 8)} aborted`);
+      break;
+    }
+    case "open":
+      await startDashboardBridge();
+      break;
+    case "open-task": {
+      const taskId = args[0]?.trim();
+      if (!taskId) {
+        console.error("usage: k2so open-task <task-id>");
+        process.exit(1);
+      }
       const profile = await loadProfile();
-      const host = profile.daemon.host ?? "127.0.0.1";
-      const port = profile.daemon.port;
-      const url = `http://${host}:${port}`;
-      spawn("xdg-open", [url], { stdio: "ignore", detached: true }).unref();
+      const workspace = join(profile.daemon.workspace, taskId);
+      spawn("xdg-open", [workspace], { stdio: "ignore", detached: true }).unref();
+      break;
+    }
+    case "prune": {
+      const res = await daemonFetch("/admin/prune", { method: "POST" });
+      if (!res.ok) {
+        console.error("k2so: prune failed — is k2so serve running?");
+        process.exit(1);
+      }
+      const result = (await res.json()) as { removed: number };
+      console.log(`pruned ${result.removed} task(s)`);
       break;
     }
     case "bench": {
@@ -94,11 +135,14 @@ async function main(): Promise<void> {
       console.log(`k2so — background desktop agent
 
 usage:
-  k2so serve          start daemon and dashboard
-  k2so ask <text>     submit a background task
-  k2so status         list tasks
-  k2so open           open dashboard in browser
-  k2so bench          show recent benchmark entries
+  k2so serve                    start daemon (Unix socket)
+  k2so ask [--type <id>] <text> submit a background task
+  k2so status                   list tasks
+  k2so abort <task-id>          abort a queued or running task
+  k2so open                     open dashboard in browser (HTTP bridge)
+  k2so open-task <task-id>      open task workspace folder
+  k2so prune                    remove old task workspaces
+  k2so bench                    show recent benchmark entries
 `);
       process.exit(command ? 1 : 0);
   }
