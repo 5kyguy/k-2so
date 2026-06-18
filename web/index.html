@@ -51,6 +51,17 @@
       }
       .task:hover { border-color: var(--accent); }
       .task.selected { border-color: var(--accent); background: #1c212b; }
+      .task-header { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+      .abort {
+        border: 1px solid var(--err);
+        background: transparent;
+        color: var(--err);
+        border-radius: 4px;
+        font-size: 0.75rem;
+        padding: 0.15rem 0.45rem;
+        cursor: pointer;
+      }
+      .abort:hover { background: rgba(224, 112, 112, 0.12); }
       .status { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
       .status.queued { color: var(--muted); }
       .status.running { color: var(--accent); }
@@ -76,6 +87,6 @@
         <div id="events" class="empty">Select a task</div>
       </section>
     </main>
-    <script src="/app.js" type="module"></script>
+    <script src="/app.js"></script>
   </body>
 </html>

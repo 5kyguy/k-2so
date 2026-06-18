@@ -7,6 +7,20 @@ function statusClass(status) {
   return `status ${status}`;
 }
 
+function canAbort(status) {
+  return status === "queued" || status === "running";
+}
+
+async function abortTask(taskId, event) {
+  event.stopPropagation();
+  const res = await fetch(`/tasks/${taskId}/abort`, { method: "POST" });
+  if (!res.ok) {
+    alert("Abort failed");
+    return;
+  }
+  void refresh();
+}
+
 function renderTasks(tasks) {
   if (!tasks.length) {
     tasksEl.className = "empty";
@@ -18,7 +32,14 @@ function renderTasks(tasks) {
     .map(
       (t) => `
     <div class="task${t.id === selectedId ? " selected" : ""}" data-id="${t.id}">
-      <div class="${statusClass(t.status)}">${t.status}</div>
+      <div class="task-header">
+        <div class="${statusClass(t.status)}">${t.status}</div>
+        ${
+          canAbort(t.status)
+            ? `<button class="abort" data-id="${t.id}" type="button">Abort</button>`
+            : ""
+        }
+      </div>
       <div class="instruction">${escapeHtml(t.instruction)}</div>
     </div>`,
     )
@@ -29,6 +50,12 @@ function renderTasks(tasks) {
       selectedId = el.dataset.id;
       renderTasks(tasks);
       showEvents(tasks.find((t) => t.id === selectedId));
+    });
+  }
+
+  for (const btn of tasksEl.querySelectorAll(".abort")) {
+    btn.addEventListener("click", (event) => {
+      void abortTask(btn.dataset.id, event);
     });
   }
 }
@@ -43,6 +70,7 @@ function showEvents(task) {
   const lines = [
     `id: ${task.id}`,
     `session: ${task.sessionId || "—"}`,
+    `type: ${task.taskType || "background"}`,
     `created: ${task.createdAt}`,
     "",
     ...task.events.map((e) => `[${e.type}] ${e.at}\n${JSON.stringify(e.data ?? {}, null, 2)}`),
