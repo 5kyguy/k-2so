@@ -8,8 +8,10 @@ export interface AgentEvent {
 }
 
 export interface TaskOpts {
+  taskId: string;
   model?: string;
   agent?: string;
+  taskType?: string;
 }
 
 export interface TaskHandle {
@@ -21,6 +23,7 @@ export interface TaskRecord {
   id: string;
   sessionId: string;
   instruction: string;
+  taskType: string;
   status: TaskStatus;
   createdAt: string;
   updatedAt: string;

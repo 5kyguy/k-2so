@@ -36,7 +36,7 @@ export class OpenCodeEngine implements AgentEngine {
   }
 
   async startTask(instruction: string, opts: TaskOpts): Promise<TaskHandle> {
-    const taskId = crypto.randomUUID();
+    const taskId = opts.taskId;
     const title = instruction.trim().slice(0, 80) || "K-2SO task";
     const session = await this.client.session.create({ body: { title } });
     const sessionId = session.data?.id;
