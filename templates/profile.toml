@@ -8,8 +8,7 @@ name = "k2so"
 default_model = "zai-coding/glm-5.2"
 
 [daemon]
-port = 4178
-host = "127.0.0.1"
+socket_path = "~/.local/state/k2so/k2so.sock"
 max_concurrent_tasks = 1
 workspace = "~/.local/share/k2so/workspace"
 state = "~/.local/state/k2so"
@@ -17,3 +16,7 @@ state = "~/.local/state/k2so"
 [notify]
 enabled = false
 command = "notify-send"
+
+[retention]
+max_age_days = 14
+max_tasks = 200

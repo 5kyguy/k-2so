@@ -14,8 +14,7 @@ export interface K2soProfile {
     default_model: string;
   };
   daemon: {
-    port: number;
-    host?: string;
+    socket_path: string;
     max_concurrent_tasks: number;
     workspace: string;
     state: string;
@@ -23,6 +22,10 @@ export interface K2soProfile {
   notify?: {
     enabled?: boolean;
     command?: string;
+  };
+  retention?: {
+    max_age_days?: number;
+    max_tasks?: number;
   };
 }
 
@@ -37,11 +40,14 @@ const DEFAULT_PROFILE: K2soProfile = {
     default_model: "zai-coding/glm-5.2",
   },
   daemon: {
-    port: 4178,
-    host: "127.0.0.1",
+    socket_path: join(homedir(), ".local", "state", "k2so", "k2so.sock"),
     max_concurrent_tasks: 1,
     workspace: join(homedir(), ".local", "share", "k2so", "workspace"),
     state: join(homedir(), ".local", "state", "k2so"),
+  },
+  retention: {
+    max_age_days: 14,
+    max_tasks: 200,
   },
 };
 
@@ -53,6 +59,9 @@ function expandHome(path: string): string {
 }
 
 function normalizeProfile(raw: Partial<K2soProfile>): K2soProfile {
+  const state = expandHome(raw.daemon?.state ?? DEFAULT_PROFILE.daemon.state);
+  const socketPath = expandHome(raw.daemon?.socket_path ?? join(state, "k2so.sock"));
+
   return {
     engine: {
       type: "opencode",
@@ -64,11 +73,10 @@ function normalizeProfile(raw: Partial<K2soProfile>): K2soProfile {
       default_model: raw.agent?.default_model ?? DEFAULT_PROFILE.agent.default_model,
     },
     daemon: {
-      port: raw.daemon?.port ?? DEFAULT_PROFILE.daemon.port,
-      host: raw.daemon?.host ?? DEFAULT_PROFILE.daemon.host,
+      socket_path: socketPath,
       max_concurrent_tasks: raw.daemon?.max_concurrent_tasks ?? DEFAULT_PROFILE.daemon.max_concurrent_tasks,
       workspace: expandHome(raw.daemon?.workspace ?? DEFAULT_PROFILE.daemon.workspace),
-      state: expandHome(raw.daemon?.state ?? DEFAULT_PROFILE.daemon.state),
+      state,
     },
     notify: raw.notify
       ? {
@@ -76,6 +84,10 @@ function normalizeProfile(raw: Partial<K2soProfile>): K2soProfile {
           command: raw.notify.command ?? "notify-send",
         }
       : undefined,
+    retention: {
+      max_age_days: raw.retention?.max_age_days ?? DEFAULT_PROFILE.retention?.max_age_days,
+      max_tasks: raw.retention?.max_tasks ?? DEFAULT_PROFILE.retention?.max_tasks,
+    },
   };
 }
 

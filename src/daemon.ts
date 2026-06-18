@@ -1,39 +1,17 @@
-import { spawn } from "node:child_process";
-import { serve } from "@hono/node-server";
+import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import { join } from "node:path";
+import { getRequestListener } from "@hono/node-server";
 import { loadProfile } from "./config.js";
 import { OpenCodeEngine } from "./engine/opencode.js";
+import { OpenCodeSupervisor } from "./engine/supervisor.js";
 import { TaskManager } from "./tasks/manager.js";
 import { BenchLogger } from "./bench.js";
 import { createApi, webRoot } from "./api/routes.js";
 
-let opencodeChild: ReturnType<typeof spawn> | undefined;
-
-async function ensureOpencode(profile: Awaited<ReturnType<typeof loadProfile>>): Promise<void> {
-  const engine = new OpenCodeEngine(profile);
-  if (await engine.isReady()) {
-    return;
-  }
-
-  console.log("k2so: starting opencode serve…");
-  opencodeChild = spawn("opencode", ["serve", "--port", "4096", "--hostname", "127.0.0.1"], {
-    stdio: "inherit",
-    env: process.env,
-  });
-
-  for (let i = 0; i < 30; i++) {
-    await new Promise((r) => setTimeout(r, 500));
-    if (await engine.isReady()) {
-      console.log("k2so: opencode ready");
-      return;
-    }
-  }
-
-  throw new Error("opencode serve did not become ready within 15s");
-}
-
 export async function startDaemon(): Promise<void> {
   const profile = await loadProfile();
-  await ensureOpencode(profile);
+  await mkdir(profile.daemon.state, { recursive: true });
 
   const engine = new OpenCodeEngine(profile);
   const bench = new BenchLogger(profile.daemon.state);
@@ -42,19 +20,35 @@ export async function startDaemon(): Promise<void> {
   const manager = new TaskManager(profile, engine, bench);
   await manager.init();
 
-  const app = createApi(manager, webRoot());
-  const host = profile.daemon.host ?? "127.0.0.1";
-  const port = profile.daemon.port;
+  const supervisor = new OpenCodeSupervisor(profile, engine, manager);
+  await supervisor.ensureReady();
+  supervisor.start();
 
-  const server = serve({ fetch: app.fetch, hostname: host, port }, () => {
-    console.log(`k2so: dashboard http://${host}:${port}`);
+  const app = createApi(manager, webRoot());
+  const listener = getRequestListener(app.fetch);
+  const server = createServer(listener);
+  const socketPath = profile.daemon.socket_path;
+
+  await rm(socketPath, { force: true });
+  await new Promise<void>((resolve, reject) => {
+    server.listen(socketPath, () => resolve());
+    server.on("error", reject);
   });
+  await chmod(socketPath, 0o600);
+
+  await writeFile(
+    join(profile.daemon.state, "runtime.json"),
+    JSON.stringify({ socketPath }, null, 2),
+  );
+
+  console.log(`k2so: listening on ${socketPath}`);
 
   const shutdown = async () => {
     console.log("k2so: shutting down…");
+    supervisor.stop();
     await manager.shutdown();
     server.close();
-    opencodeChild?.kill("SIGTERM");
+    await rm(socketPath, { force: true }).catch(() => {});
     process.exit(0);
   };
 
