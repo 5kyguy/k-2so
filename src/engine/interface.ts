@@ -12,6 +12,8 @@ export interface TaskOpts {
   model?: string;
   agent?: string;
   taskType?: string;
+  parentTaskId?: string;
+  parentSessionId?: string;
 }
 
 export interface TaskHandle {
@@ -29,6 +31,7 @@ export interface TaskRecord {
   updatedAt: string;
   error?: string;
   events: AgentEvent[];
+  parentTaskId?: string;
 }
 
 export type Unsubscribe = () => void;

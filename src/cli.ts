@@ -4,6 +4,8 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { loadProfile } from "./config.js";
+import { runDoctor, runInit, runUninstall } from "./init.js";
+import { runMemoryCli } from "./memory/cli.js";
 import { startDaemon } from "./daemon.js";
 import { daemonFetch } from "./client.js";
 import { startDashboardBridge } from "./dashboard-bridge.js";
@@ -12,8 +14,13 @@ import type { BenchEntry } from "./bench.js";
 
 const [, , command, ...args] = process.argv;
 
-function parseAskArgs(argv: string[]): { taskType?: string; instruction: string } {
+function parseAskArgs(argv: string[]): {
+  taskType?: string;
+  parentTaskId?: string;
+  instruction: string;
+} {
   let taskType: string | undefined;
+  let parentTaskId: string | undefined;
   const rest: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
@@ -21,10 +28,14 @@ function parseAskArgs(argv: string[]): { taskType?: string; instruction: string 
       taskType = argv[++i];
       continue;
     }
+    if (argv[i] === "--continue" && argv[i + 1]) {
+      parentTaskId = argv[++i];
+      continue;
+    }
     rest.push(argv[i]!);
   }
 
-  return { taskType, instruction: rest.join(" ").trim() };
+  return { taskType, parentTaskId, instruction: rest.join(" ").trim() };
 }
 
 async function main(): Promise<void> {
@@ -33,15 +44,15 @@ async function main(): Promise<void> {
       await startDaemon();
       break;
     case "ask": {
-      const { taskType, instruction } = parseAskArgs(args);
+      const { taskType, parentTaskId, instruction } = parseAskArgs(args);
       if (!instruction) {
-        console.error("usage: k2so ask [--type <id>] <instruction>");
+        console.error("usage: k2so ask [--type <id>] [--continue <task-id>] <instruction>");
         process.exit(1);
       }
       const res = await daemonFetch("/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instruction, taskType }),
+        body: JSON.stringify({ instruction, taskType, parentTaskId }),
       });
       if (!res.ok) {
         const text = await res.text();
@@ -106,6 +117,21 @@ async function main(): Promise<void> {
       console.log(`pruned ${result.removed} task(s)`);
       break;
     }
+    case "init": {
+      const force = args.includes("--force");
+      const migrateOpencode = args.includes("--migrate-opencode");
+      await runInit({ force, migrateOpencode });
+      break;
+    }
+    case "doctor":
+      await runDoctor();
+      break;
+    case "uninstall":
+      await runUninstall();
+      break;
+    case "memory":
+      await runMemoryCli(args);
+      break;
     case "bench": {
       const profile = await loadProfile();
       const logPath = join(profile.daemon.state, "bench", "log.jsonl");
@@ -134,21 +160,35 @@ async function main(): Promise<void> {
     default:
       console.log(`k2so — background desktop agent
 
+Prerequisite: install and configure OpenCode yourself, then run k2so init.
+
 usage:
+  k2so init [--force] [--migrate-opencode]
+                                register K-2SO; --migrate-opencode removes legacy agent.k2so
+  k2so doctor                   health check (non-mutating)
+  k2so uninstall                remove K-2SO files (opencode.json untouched)
   k2so serve                    start daemon (Unix socket)
-  k2so ask [--type <id>] <text> submit a background task
+  k2so ask [--type <id>] [--continue <task-id>] <text>
+                                submit a background task; --continue chains on a prior task's session
   k2so status                   list tasks
   k2so abort <task-id>          abort a queued or running task
   k2so open                     open dashboard in browser (HTTP bridge)
   k2so open-task <task-id>      open task workspace folder
   k2so prune                    remove old task workspaces
   k2so bench                    show recent benchmark entries
+  k2so memory show|edit|reset   inspect and edit memory files
 `);
       process.exit(command ? 1 : 0);
   }
 }
 
 main().catch((err) => {
+  const nodeErr = err as NodeJS.ErrnoException;
+  if (nodeErr.code === "ENOENT" && nodeErr.syscall === "connect") {
+    console.error("k2so: daemon not running — start with: k2so serve");
+    console.error("      or: systemctl --user start k2so");
+    process.exit(1);
+  }
   console.error("k2so:", err);
   process.exit(1);
 });

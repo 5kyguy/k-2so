@@ -3,9 +3,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import type { K2soProfile } from "../config.js";
+import { getMemorySnapshot, readReflectionLog } from "../memory/api.js";
 import type { TaskManager } from "../tasks/manager.js";
 
-export function createApi(manager: TaskManager, webRoot: string): Hono {
+export function createApi(manager: TaskManager, webRoot: string, profile: K2soProfile): Hono {
   const app = new Hono();
   const clients = new Set<(data: string) => void>();
 
@@ -34,17 +36,23 @@ export function createApi(manager: TaskManager, webRoot: string): Hono {
       model?: string;
       agent?: string;
       taskType?: string;
+      parentTaskId?: string;
     }>();
     if (!body.instruction?.trim()) {
       return c.json({ error: "instruction required" }, 400);
     }
-    const task = await manager.enqueue(body.instruction, {
-      model: body.model,
-      agent: body.agent,
-      taskType: body.taskType,
-    });
-    broadcast({ type: "task.created", task });
-    return c.json(task, 202);
+    try {
+      const task = await manager.enqueue(body.instruction, {
+        model: body.model,
+        agent: body.agent,
+        taskType: body.taskType,
+        parentTaskId: body.parentTaskId,
+      });
+      broadcast({ type: "task.created", task });
+      return c.json(task, 202);
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+    }
   });
 
   app.post("/tasks/:id/abort", async (c) => {
@@ -60,6 +68,14 @@ export function createApi(manager: TaskManager, webRoot: string): Hono {
     const result = await manager.prune();
     broadcast({ type: "tasks.pruned", ...result });
     return c.json(result);
+  });
+
+  app.get("/memory", async (c) => c.json(await getMemorySnapshot(profile)));
+
+  app.get("/memory/reflection", async (c) => {
+    const limit = Number.parseInt(c.req.query("limit") ?? "50", 10);
+    const entries = await readReflectionLog(profile.daemon.state, Number.isFinite(limit) ? limit : 50);
+    return c.json({ entries });
   });
 
   app.get("/events", (c) =>
