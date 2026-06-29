@@ -2,12 +2,15 @@
 
 Background task agent for your desktop. K-2SO is the brains — it plans, researches, and reports. Pair it with an MCP integration pack (like [R2-D2](https://github.com/5kyguy/r2-d2)) for local system tools.
 
+**OpenCode is a prerequisite, not bundled.** Install and configure [OpenCode](https://opencode.ai) yourself (provider, auth, `~/.config/opencode/opencode.json`). K-2SO registers via sidecar files and never writes your OpenCode config.
+
 ## What it does
 
 - Accept instructions via CLI (`k2so ask "..."`) over a Unix domain socket API
-- Run tasks in the background through an [OpenCode](https://opencode.ai) engine
+- Run tasks in the background through an OpenCode engine
 - Stream progress to a local web dashboard (`k2so open` starts a short-lived HTTP bridge)
 - Queue work with configurable concurrency limits; prune old workspaces with `k2so prune`
+- Remember context across tasks via local memory files (`SOUL.md`, `USER.md`, `MEMORY.md`, skills)
 
 ## Requirements
 
@@ -15,26 +18,58 @@ Background task agent for your desktop. K-2SO is the brains — it plans, resear
 - [OpenCode](https://opencode.ai) installed and configured with your LLM provider
 - An MCP server for platform-specific tools (optional for testing)
 
-## Quick start
+## Install
+
+```bash
+# 1. Install OpenCode and configure your provider (see docs/OPENCODE.md)
+curl -fsSL https://opencode.ai/install | bash
+
+# 2. Install K-2SO
+npm install -g k2so
+
+# 3. Register K-2SO (markdown agent + memory seeds — no opencode.json edits)
+k2so init
+
+# 4. Run
+k2so serve
+k2so ask "Summarize what is in my Downloads folder"
+```
+
+Upgrading from the old `install.sh` model? Run `k2so init --migrate-opencode` to move the agent to `~/.config/opencode/agents/k2so.md` and remove the legacy `agent.k2so` block from your config.
+
+Full guide: [`docs/INSTALL.md`](docs/INSTALL.md). Health check: `k2so doctor`. Remove: `k2so uninstall`.
+
+## Memory
+
+K-2SO is a companion that grows via local files in `~/.config/k2so/`:
+
+- **Soul** — persona (`SOUL.md`)
+- **User** — model of you (`USER.md`)
+- **Memory** — long-term facts (`MEMORY.md`)
+- **Skills** — reusable procedures (`skills/*.md`)
+
+```bash
+k2so memory show
+k2so memory edit user
+k2so open    # Memory + Reflection tabs in the dashboard
+```
+
+Details: [`docs/MEMORY.md`](docs/MEMORY.md).
+
+## Development
 
 ```bash
 npm install
 npm run build
-
-# Start the daemon (expects opencode serve on :4096, or set in profile)
+node dist/cli.js init    # or: npm link && k2so init
 k2so serve
-
-# In another terminal
-k2so ask "Summarize what is in my Downloads folder"
-k2so status
-k2so open   # opens the dashboard
 ```
 
 ## Configuration
 
 Profile path defaults to `~/.config/k2so/profile.toml`. Override with `K2SO_PROFILE`.
 
-See [`docs/OPENCODE.md`](docs/OPENCODE.md) and `templates/` for OpenCode and profile setup.
+See [`docs/OPENCODE.md`](docs/OPENCODE.md) and `templates/` for profile and agent templates.
 
 ## R2-D2 integration
 
