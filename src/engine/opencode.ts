@@ -1,5 +1,6 @@
 import { createOpencodeClient } from "@opencode-ai/sdk";
 import type { K2soProfile } from "../config.js";
+import { assemblePromptForTask } from "../memory/assemble.js";
 import type { AgentEngine, AgentEvent, TaskHandle, TaskOpts, Unsubscribe } from "./interface.js";
 
 function parseModel(model: string): { providerID: string; modelID: string } {
@@ -38,7 +39,9 @@ export class OpenCodeEngine implements AgentEngine {
   async startTask(instruction: string, opts: TaskOpts): Promise<TaskHandle> {
     const taskId = opts.taskId;
     const title = instruction.trim().slice(0, 80) || "K-2SO task";
-    const session = await this.client.session.create({ body: { title } });
+    const session = await this.client.session.create({
+      body: { title, parentID: opts.parentSessionId },
+    });
     const sessionId = session.data?.id;
     if (!sessionId) {
       throw new Error("OpenCode session.create did not return a session id");
@@ -55,6 +58,7 @@ export class OpenCodeEngine implements AgentEngine {
     const model = opts.model ?? this.profile.agent.default_model;
     const { providerID, modelID } = parseModel(model);
     const agent = opts.agent ?? this.profile.agent.name;
+    const promptText = await assemblePromptForTask(this.profile, instruction);
 
     void this.client.session
       .prompt({
@@ -62,7 +66,7 @@ export class OpenCodeEngine implements AgentEngine {
         body: {
           agent,
           model: { providerID, modelID },
-          parts: [{ type: "text", text: instruction }],
+          parts: [{ type: "text", text: promptText }],
         },
       })
       .then(() => {

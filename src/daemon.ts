@@ -24,7 +24,7 @@ export async function startDaemon(): Promise<void> {
   await supervisor.ensureReady();
   supervisor.start();
 
-  const app = createApi(manager, webRoot());
+  const app = createApi(manager, webRoot(), profile);
   const listener = getRequestListener(app.fetch);
   const server = createServer(listener);
   const socketPath = profile.daemon.socket_path;

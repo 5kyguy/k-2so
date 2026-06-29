@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { K2soProfile } from "../config.js";
 import type { AgentEngine, AgentEvent, TaskRecord } from "../engine/interface.js";
 import type { BenchLogger } from "../bench.js";
+import { reflectOnTask } from "../memory/reflect.js";
 import { notifyTaskDone } from "../notify.js";
 import { TaskStore } from "./store.js";
 
@@ -14,9 +15,11 @@ export class TaskManager {
     model?: string;
     agent?: string;
     taskType?: string;
+    parentTaskId?: string;
   }> = [];
   private store: TaskStore;
   private unsubscribe?: () => void;
+  private lastReflectAtMs = 0;
 
   constructor(
     private profile: K2soProfile,
@@ -48,10 +51,14 @@ export class TaskManager {
 
   async enqueue(
     instruction: string,
-    opts: { model?: string; agent?: string; taskType?: string } = {},
+    opts: { model?: string; agent?: string; taskType?: string; parentTaskId?: string } = {},
   ): Promise<TaskRecord> {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
+    const parentTask = opts.parentTaskId ? this.store.get(opts.parentTaskId) : undefined;
+    if (opts.parentTaskId && !parentTask) {
+      throw new Error(`Parent task ${opts.parentTaskId} not found`);
+    }
     const task: TaskRecord = {
       id,
       sessionId: "",
@@ -61,6 +68,7 @@ export class TaskManager {
       createdAt: now,
       updatedAt: now,
       events: [],
+      parentTaskId: parentTask?.id,
     };
     this.store.upsert(task);
     await this.store.save();
@@ -72,6 +80,7 @@ export class TaskManager {
       model: opts.model,
       agent: opts.agent,
       taskType: task.taskType,
+      parentTaskId: parentTask?.id,
     });
     void this.pump();
 
@@ -179,6 +188,7 @@ export class TaskManager {
     model?: string;
     agent?: string;
     taskType?: string;
+    parentTaskId?: string;
   }): Promise<void> {
     const queued = this.store.get(job.taskId);
     if (!queued || queued.status !== "queued") {
@@ -189,12 +199,16 @@ export class TaskManager {
     await mkdir(workspace, { recursive: true });
     await writeFile(join(workspace, "instruction.txt"), job.instruction);
 
+    const parent = job.parentTaskId ? this.store.get(job.parentTaskId) : undefined;
+
     try {
       const handle = await this.engine.startTask(job.instruction, {
         taskId: queued.id,
         model: job.model,
         agent: job.agent,
         taskType: job.taskType,
+        parentTaskId: parent?.id,
+        parentSessionId: parent?.sessionId || undefined,
       });
       queued.sessionId = handle.sessionId;
       queued.status = "running";
@@ -235,6 +249,24 @@ export class TaskManager {
     await this.store.save();
   }
 
+  private shouldReflect(task: TaskRecord): boolean {
+    if (task.status !== "done") {
+      return false;
+    }
+    const types = this.profile.memory?.reflect_on_task_types;
+    if (types && !types.includes(task.taskType)) {
+      return false;
+    }
+    if (!task.events.some((e) => e.type === "message")) {
+      return false;
+    }
+    const minInterval = this.profile.memory?.reflect_min_interval_ms ?? 0;
+    if (minInterval > 0 && Date.now() - this.lastReflectAtMs < minInterval) {
+      return false;
+    }
+    return true;
+  }
+
   private async finalizeTask(task: TaskRecord): Promise<void> {
     const toolCalls = task.events.filter((e) => e.type === "tool").length;
     void this.bench?.record({
@@ -245,5 +277,10 @@ export class TaskManager {
       turns: task.events.filter((e) => e.type === "message").length,
     });
     notifyTaskDone(this.profile, task);
+
+    if (this.profile.memory?.reflect && this.shouldReflect(task)) {
+      this.lastReflectAtMs = Date.now();
+      reflectOnTask(task, this.profile);
+    }
   }
 }
