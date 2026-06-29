@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import type { K2soProfile } from "../config.js";
+import { opencodeConfigOverlay } from "../init.js";
 import type { OpenCodeEngine } from "./opencode.js";
 import type { TaskManager } from "../tasks/manager.js";
 
@@ -54,7 +55,10 @@ export class OpenCodeSupervisor {
       this.opencodeChild?.kill("SIGTERM");
       this.opencodeChild = spawn("opencode", ["serve", "--port", "4096", "--hostname", "127.0.0.1"], {
         stdio: "inherit",
-        env: process.env,
+        env: {
+          ...process.env,
+          OPENCODE_CONFIG_CONTENT: opencodeConfigOverlay(),
+        },
       });
 
       for (let i = 0; i < READY_ATTEMPTS; i++) {

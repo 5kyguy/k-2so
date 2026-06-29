@@ -9,10 +9,12 @@
   "files": [
     "dist",
     "templates",
-    "web"
+    "web",
+    "mcp/memory/dist",
+    "mcp/memory/package.json"
   ],
   "scripts": {
-    "build": "tsc && node scripts/copy-assets.mjs",
+    "build": "tsc && npm run build --prefix mcp/memory && node scripts/copy-assets.mjs",
     "dev": "tsc --watch",
     "start": "node dist/cli.js serve",
     "typecheck": "tsc --noEmit"
