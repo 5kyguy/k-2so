@@ -2,6 +2,17 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { parse } from "smol-toml";
+import { expandHome } from "./paths.js";
+
+export interface MemoryConfig {
+  enabled?: boolean;
+  dir?: string;
+  reflect?: boolean;
+  reflect_model?: string;
+  reflect_on_task_types?: string[];
+  compact_user_threshold?: number;
+  reflect_min_interval_ms?: number;
+}
 
 export interface K2soProfile {
   engine: {
@@ -27,6 +38,7 @@ export interface K2soProfile {
     max_age_days?: number;
     max_tasks?: number;
   };
+  memory?: MemoryConfig;
 }
 
 const DEFAULT_PROFILE: K2soProfile = {
@@ -49,14 +61,16 @@ const DEFAULT_PROFILE: K2soProfile = {
     max_age_days: 14,
     max_tasks: 200,
   },
+  memory: {
+    enabled: true,
+    dir: join(homedir(), ".config", "k2so"),
+    reflect: true,
+    reflect_model: "zai-coding/glm-4.5-air",
+    reflect_on_task_types: ["background"],
+    compact_user_threshold: 20,
+    reflect_min_interval_ms: 5 * 60 * 1000,
+  },
 };
-
-function expandHome(path: string): string {
-  if (path.startsWith("~/")) {
-    return join(homedir(), path.slice(2));
-  }
-  return path;
-}
 
 function normalizeProfile(raw: Partial<K2soProfile>): K2soProfile {
   const state = expandHome(raw.daemon?.state ?? DEFAULT_PROFILE.daemon.state);
@@ -87,6 +101,18 @@ function normalizeProfile(raw: Partial<K2soProfile>): K2soProfile {
     retention: {
       max_age_days: raw.retention?.max_age_days ?? DEFAULT_PROFILE.retention?.max_age_days,
       max_tasks: raw.retention?.max_tasks ?? DEFAULT_PROFILE.retention?.max_tasks,
+    },
+    memory: {
+      enabled: raw.memory?.enabled ?? DEFAULT_PROFILE.memory?.enabled,
+      dir: expandHome(raw.memory?.dir ?? DEFAULT_PROFILE.memory!.dir!),
+      reflect: raw.memory?.reflect ?? DEFAULT_PROFILE.memory?.reflect,
+      reflect_model: raw.memory?.reflect_model ?? DEFAULT_PROFILE.memory?.reflect_model,
+      reflect_on_task_types:
+        raw.memory?.reflect_on_task_types ?? DEFAULT_PROFILE.memory?.reflect_on_task_types,
+      compact_user_threshold:
+        raw.memory?.compact_user_threshold ?? DEFAULT_PROFILE.memory?.compact_user_threshold,
+      reflect_min_interval_ms:
+        raw.memory?.reflect_min_interval_ms ?? DEFAULT_PROFILE.memory?.reflect_min_interval_ms,
     },
   };
 }
