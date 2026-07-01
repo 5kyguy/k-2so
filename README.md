@@ -25,7 +25,7 @@ Background task agent for your desktop. K-2SO is the brains — it plans, resear
 curl -fsSL https://opencode.ai/install | bash
 
 # 2. Install K-2SO
-npm install -g k2so
+npm install -g @5kyguy/k2so
 
 # 3. Register K-2SO (markdown agent + memory seeds — no opencode.json edits)
 k2so init

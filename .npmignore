@@ -1,6 +1,4 @@
 node_modules/
-/dist/
-/mcp/memory/dist/
 *.tsbuildinfo
 .env
 .env.*

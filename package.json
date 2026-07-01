@@ -1,10 +1,10 @@
 {
-  "name": "k2so",
+  "name": "@5kyguy/k2so",
   "version": "0.1.0",
   "description": "Background task agent for your desktop — the brains to your tool layer",
   "type": "module",
   "bin": {
-    "k2so": "./dist/cli.js"
+    "k2so": "dist/cli.js"
   },
   "files": [
     "dist",
@@ -16,13 +16,34 @@
   "scripts": {
     "build": "tsc && npm run build --prefix mcp/memory && node scripts/copy-assets.mjs",
     "dev": "tsc --watch",
+    "prepublishOnly": "npm run build",
     "start": "node dist/cli.js serve",
     "typecheck": "tsc --noEmit"
   },
+  "author": "5kyguy",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/5kyguy/k-2so.git"
+  },
+  "homepage": "https://github.com/5kyguy/k-2so#readme",
+  "bugs": {
+    "url": "https://github.com/5kyguy/k-2so/issues"
+  },
+  "keywords": [
+    "opencode",
+    "agent",
+    "desktop",
+    "cli",
+    "mcp",
+    "background-tasks"
+  ],
   "engines": {
     "node": ">=20"
   },
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@hono/node-server": "^1.14.0",
     "@opencode-ai/sdk": "^1.14.0",

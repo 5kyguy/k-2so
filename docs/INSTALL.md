@@ -17,7 +17,7 @@ See [`OPENCODE.md`](OPENCODE.md) for provider examples.
 ## 2. Install K-2SO
 
 ```bash
-npm install -g k2so
+npm install -g @5kyguy/k2so
 ```
 
 From a local checkout:
