@@ -1,22 +1,24 @@
 let selectedId = null;
 let activeView = "tasks";
 let expandedMemoryKey = null;
+let expandedEventKeys = new Set();
+let lastTasks = [];
+let sseConnected = false;
 
 const tasksEl = document.getElementById("tasks");
-const eventsEl = document.getElementById("events");
+const detailEl = document.getElementById("detail");
+const statsEl = document.getElementById("stats");
+const taskCountEl = document.getElementById("task-count");
+const liveEl = document.getElementById("live");
 const memoryGridEl = document.getElementById("memory-grid");
 const reflectionLogEl = document.getElementById("reflection-log");
 
-function statusClass(status) {
-  return `status ${status}`;
-}
-
-function canAbort(status) {
-  return status === "queued" || status === "running";
-}
-
 function escapeHtml(s) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function previewText(text, max = 280) {
@@ -25,6 +27,205 @@ function previewText(text, max = 280) {
     return "(empty)";
   }
   return trimmed.length > max ? `${trimmed.slice(0, max)}…` : trimmed;
+}
+
+function shortId(id) {
+  return id ? id.slice(0, 8) : "—";
+}
+
+function parseTime(iso) {
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function formatDuration(ms) {
+  if (ms < 0 || !Number.isFinite(ms)) {
+    return "—";
+  }
+  if (ms < 1000) {
+    return `${ms}ms`;
+  }
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) {
+    return `${sec}s`;
+  }
+  const min = Math.floor(sec / 60);
+  const remSec = sec % 60;
+  if (min < 60) {
+    return remSec ? `${min}m ${remSec}s` : `${min}m`;
+  }
+  const hr = Math.floor(min / 60);
+  const remMin = min % 60;
+  return remMin ? `${hr}h ${remMin}m` : `${hr}h`;
+}
+
+function relativeTime(iso) {
+  const ms = parseTime(iso);
+  if (ms === null) {
+    return iso || "—";
+  }
+  const diff = Date.now() - ms;
+  const abs = Math.abs(diff);
+  if (abs < 60_000) {
+    return "just now";
+  }
+  if (abs < 3_600_000) {
+    const m = Math.floor(abs / 60_000);
+    return diff >= 0 ? `${m}m ago` : `in ${m}m`;
+  }
+  if (abs < 86_400_000) {
+    const h = Math.floor(abs / 3_600_000);
+    return diff >= 0 ? `${h}h ago` : `in ${h}h`;
+  }
+  return new Date(ms).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function taskDuration(task) {
+  const start = parseTime(task.createdAt);
+  const end = parseTime(task.updatedAt);
+  if (start === null) {
+    return null;
+  }
+  if (task.status === "running" || task.status === "queued") {
+    return Date.now() - start;
+  }
+  if (end === null) {
+    return null;
+  }
+  return end - start;
+}
+
+function countByStatus(tasks) {
+  const counts = { running: 0, queued: 0, done: 0, failed: 0, aborted: 0 };
+  for (const t of tasks) {
+    if (counts[t.status] !== undefined) {
+      counts[t.status]++;
+    }
+  }
+  return counts;
+}
+
+function sortTasks(tasks) {
+  const order = { running: 0, queued: 1, done: 2, failed: 3, aborted: 4 };
+  return [...tasks].sort((a, b) => {
+    const sa = order[a.status] ?? 9;
+    const sb = order[b.status] ?? 9;
+    if (sa !== sb) {
+      return sa - sb;
+    }
+    return (parseTime(b.updatedAt) ?? 0) - (parseTime(a.updatedAt) ?? 0);
+  });
+}
+
+function canAbort(status) {
+  return status === "queued" || status === "running";
+}
+
+function eventCounts(events) {
+  let messages = 0;
+  let tools = 0;
+  for (const e of events ?? []) {
+    if (e.type === "message") {
+      messages++;
+    }
+    if (e.type === "tool") {
+      tools++;
+    }
+  }
+  return { messages, tools };
+}
+
+function extractPartText(data) {
+  if (!data || typeof data !== "object") {
+    return "";
+  }
+  const part = data;
+  if (typeof part.text === "string" && part.text.trim()) {
+    return part.text.trim();
+  }
+  if (typeof part.content === "string" && part.content.trim()) {
+    return part.content.trim();
+  }
+  if (Array.isArray(part.parts)) {
+    return part.parts
+      .filter((p) => p?.type === "text" && p.text?.trim())
+      .map((p) => p.text.trim())
+      .join("\n");
+  }
+  return "";
+}
+
+function extractToolName(data) {
+  if (!data || typeof data !== "object") {
+    return "tool";
+  }
+  return data.tool || data.name || data.toolName || "tool";
+}
+
+function summarizeEvent(event) {
+  const data = event.data ?? {};
+  switch (event.type) {
+    case "status": {
+      const status = data.status || "update";
+      const session = data.sessionId ? ` · session ${shortId(data.sessionId)}` : "";
+      return { title: "Status", body: `${status}${session}`, muted: false };
+    }
+    case "message": {
+      const text = extractPartText(data);
+      return {
+        title: data.role ? `Message (${data.role})` : "Message",
+        body: text || "(no text content)",
+        muted: !text,
+      };
+    }
+    case "tool": {
+      const name = extractToolName(data);
+      const state = data.state || data.status;
+      const detail = state ? ` — ${state}` : "";
+      return { title: "Tool", body: `${name}${detail}`, muted: false };
+    }
+    case "error": {
+      const msg = data.message || data.error || JSON.stringify(data);
+      return { title: "Error", body: String(msg), muted: false };
+    }
+    case "done": {
+      return { title: "Done", body: "Task completed successfully", muted: false };
+    }
+    default:
+      return { title: event.type, body: JSON.stringify(data, null, 2), muted: true };
+  }
+}
+
+function setLiveState(connected) {
+  sseConnected = connected;
+  liveEl.classList.toggle("connected", connected);
+  liveEl.querySelector(".live-label").textContent = connected ? "live" : "reconnecting…";
+}
+
+function renderStats(tasks) {
+  const c = countByStatus(tasks);
+  const parts = [];
+  if (c.running) {
+    parts.push(`<span class="stat running"><strong>${c.running}</strong> running</span>`);
+  }
+  if (c.queued) {
+    parts.push(`<span class="stat queued"><strong>${c.queued}</strong> queued</span>`);
+  }
+  if (c.done) {
+    parts.push(`<span class="stat done"><strong>${c.done}</strong> done</span>`);
+  }
+  if (c.failed + c.aborted) {
+    parts.push(
+      `<span class="stat failed"><strong>${c.failed + c.aborted}</strong> failed</span>`,
+    );
+  }
+  statsEl.innerHTML = parts.length ? parts.join("") : `<span class="stat">idle</span>`;
+  taskCountEl.textContent = tasks.length ? `${tasks.length} total` : "";
 }
 
 function setView(view) {
@@ -47,6 +248,38 @@ for (const btn of document.querySelectorAll("nav button")) {
   btn.addEventListener("click", () => setView(btn.dataset.view));
 }
 
+function selectTask(id, tasks) {
+  selectedId = id;
+  const params = new URLSearchParams(window.location.search);
+  if (id) {
+    params.set("task", id);
+  } else {
+    params.delete("task");
+  }
+  const qs = params.toString();
+  const url = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
+  window.history.replaceState(null, "", url);
+  renderTasks(tasks ?? lastTasks);
+  showDetail((tasks ?? lastTasks).find((t) => t.id === selectedId));
+}
+
+function pickInitialTask(tasks) {
+  const fromUrl = new URLSearchParams(window.location.search).get("task");
+  if (fromUrl && tasks.some((t) => t.id === fromUrl)) {
+    return fromUrl;
+  }
+  const running = tasks.find((t) => t.status === "running");
+  if (running) {
+    return running.id;
+  }
+  const queued = tasks.find((t) => t.status === "queued");
+  if (queued) {
+    return queued.id;
+  }
+  const sorted = sortTasks(tasks);
+  return sorted[0]?.id ?? null;
+}
+
 async function abortTask(taskId, event) {
   event.stopPropagation();
   const res = await fetch(`/tasks/${taskId}/abort`, { method: "POST" });
@@ -58,35 +291,53 @@ async function abortTask(taskId, event) {
 }
 
 function renderTasks(tasks) {
+  lastTasks = tasks;
+  renderStats(tasks);
+
   if (!tasks.length) {
-    tasksEl.className = "empty";
+    tasksEl.className = "task-list empty";
     tasksEl.textContent = 'No tasks yet — run: k2so ask "…"';
+    detailEl.innerHTML = `<div class="detail-empty">No tasks to show</div>`;
     return;
   }
-  tasksEl.className = "";
-  tasksEl.innerHTML = tasks
-    .map(
-      (t) => `
+
+  const sorted = sortTasks(tasks);
+  tasksEl.className = "task-list";
+  tasksEl.innerHTML = sorted
+    .map((t) => {
+      const counts = eventCounts(t.events);
+      const dur = taskDuration(t);
+      const stats = [];
+      if (counts.tools) {
+        stats.push(`${counts.tools} tool${counts.tools === 1 ? "" : "s"}`);
+      }
+      if (counts.messages) {
+        stats.push(`${counts.messages} msg`);
+      }
+      if (dur !== null && t.status !== "queued") {
+        stats.push(formatDuration(dur));
+      }
+      return `
     <div class="task${t.id === selectedId ? " selected" : ""}" data-id="${t.id}">
-      <div class="task-header">
-        <div class="${statusClass(t.status)}">${t.status}</div>
+      <div class="task-top">
+        <div class="task-meta-row">
+          <span class="pill ${t.status}">${t.status}</span>
+          <span class="task-id">${shortId(t.id)}</span>
+        </div>
         ${
           canAbort(t.status)
             ? `<button class="abort" data-id="${t.id}" type="button">Abort</button>`
-            : ""
+            : `<span class="task-time">${relativeTime(t.updatedAt)}</span>`
         }
       </div>
       <div class="instruction">${escapeHtml(t.instruction)}</div>
-    </div>`,
-    )
+      ${stats.length ? `<div class="task-stats">${stats.map(escapeHtml).join(" · ")}</div>` : ""}
+    </div>`;
+    })
     .join("");
 
   for (const el of tasksEl.querySelectorAll(".task")) {
-    el.addEventListener("click", () => {
-      selectedId = el.dataset.id;
-      renderTasks(tasks);
-      showEvents(tasks.find((t) => t.id === selectedId));
-    });
+    el.addEventListener("click", () => selectTask(el.dataset.id, tasks));
   }
 
   for (const btn of tasksEl.querySelectorAll(".abort")) {
@@ -96,22 +347,116 @@ function renderTasks(tasks) {
   }
 }
 
-function showEvents(task) {
+function renderTimeline(task) {
+  const events = task.events ?? [];
+  if (!events.length) {
+    return `<div class="detail-empty" style="padding:1.5rem 0">No activity yet</div>`;
+  }
+
+  return `
+    <div class="timeline">
+      ${events
+        .map((e, i) => {
+          const key = `${task.id}:${i}`;
+          const summary = summarizeEvent(e);
+          const expanded = expandedEventKeys.has(key);
+          const doneClass = e.type === "done" ? (task.status === "done" ? "ok" : "failed") : "";
+          const raw = JSON.stringify(e.data ?? {}, null, 2);
+          return `
+        <div class="tl-item ${e.type} ${doneClass}${expanded ? " expanded" : ""}" data-event-key="${key}">
+          <span class="tl-dot"></span>
+          <div class="tl-head">
+            <span class="tl-type">${escapeHtml(summary.title)}</span>
+            <span class="tl-time">${escapeHtml(relativeTime(e.at))}</span>
+          </div>
+          <div class="tl-body${summary.muted ? " muted" : ""}">${escapeHtml(summary.body)}</div>
+          <button type="button" class="tl-toggle" data-event-key="${key}">${expanded ? "Hide raw" : "Show raw"}</button>
+          <div class="tl-raw">${escapeHtml(raw)}</div>
+        </div>`;
+        })
+        .join("")}
+    </div>`;
+}
+
+function showDetail(task) {
   if (!task) {
-    eventsEl.className = "empty";
-    eventsEl.textContent = "Select a task";
+    detailEl.innerHTML = `<div class="detail-empty">Select a task to view activity</div>`;
     return;
   }
-  eventsEl.className = "";
-  const lines = [
-    `id: ${task.id}`,
-    `session: ${task.sessionId || "—"}`,
-    `type: ${task.taskType || "background"}`,
-    `created: ${task.createdAt}`,
-    "",
-    ...task.events.map((e) => `[${e.type}] ${e.at}\n${JSON.stringify(e.data ?? {}, null, 2)}`),
-  ];
-  eventsEl.textContent = lines.join("\n");
+
+  const dur = taskDuration(task);
+  const counts = eventCounts(task.events);
+  const parent = task.parentTaskId
+    ? `<span class="meta-link" data-parent="${task.parentTaskId}">${shortId(task.parentTaskId)}</span>`
+    : "—";
+
+  detailEl.innerHTML = `
+    <section>
+      <div class="meta-grid">
+        <div class="meta-item">
+          <label>Task ID</label>
+          <code title="${escapeHtml(task.id)}">${escapeHtml(task.id)}</code>
+        </div>
+        <div class="meta-item">
+          <label>Status</label>
+          <span class="pill ${task.status}">${task.status}</span>
+        </div>
+        <div class="meta-item">
+          <label>Session</label>
+          <span>${task.sessionId ? `<code>${escapeHtml(shortId(task.sessionId))}</code>` : "—"}</span>
+        </div>
+        <div class="meta-item">
+          <label>Type</label>
+          <span>${escapeHtml(task.taskType || "background")}</span>
+        </div>
+        <div class="meta-item">
+          <label>Parent</label>
+          <span>${parent}</span>
+        </div>
+        <div class="meta-item">
+          <label>Created</label>
+          <span title="${escapeHtml(task.createdAt)}">${escapeHtml(relativeTime(task.createdAt))}</span>
+        </div>
+        <div class="meta-item">
+          <label>Updated</label>
+          <span title="${escapeHtml(task.updatedAt)}">${escapeHtml(relativeTime(task.updatedAt))}</span>
+        </div>
+        <div class="meta-item">
+          <label>Duration</label>
+          <span>${dur !== null ? escapeHtml(formatDuration(dur)) : "—"}</span>
+        </div>
+        <div class="meta-item">
+          <label>Activity</label>
+          <span>${counts.tools} tools · ${counts.messages} messages</span>
+        </div>
+      </div>
+      ${task.error ? `<div class="error-banner">${escapeHtml(task.error)}</div>` : ""}
+      <div class="section-head" style="padding:0 0.85rem">
+        <h2>Activity</h2>
+        <span class="task-count">${(task.events ?? []).length} events</span>
+      </div>
+      <div class="timeline-wrap">
+        ${renderTimeline(task)}
+      </div>
+    </section>`;
+
+  const parentLink = detailEl.querySelector("[data-parent]");
+  if (parentLink) {
+    parentLink.addEventListener("click", () => selectTask(parentLink.dataset.parent, lastTasks));
+  }
+
+  for (const btn of detailEl.querySelectorAll(".tl-toggle")) {
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const key = btn.dataset.eventKey;
+      if (expandedEventKeys.has(key)) {
+        expandedEventKeys.delete(key);
+      } else {
+        expandedEventKeys.add(key);
+      }
+      showDetail(task);
+    });
+  }
 }
 
 function memoryCard(key, title, path, content) {
@@ -206,9 +551,17 @@ function renderReflection(entries) {
 async function refresh() {
   const res = await fetch("/tasks");
   const tasks = await res.json();
+
+  if (!selectedId) {
+    selectedId = pickInitialTask(tasks);
+  } else if (!tasks.some((t) => t.id === selectedId)) {
+    selectedId = pickInitialTask(tasks);
+    expandedEventKeys.clear();
+  }
+
   renderTasks(tasks);
   if (selectedId) {
-    showEvents(tasks.find((t) => t.id === selectedId));
+    showDetail(tasks.find((t) => t.id === selectedId));
   }
 }
 
@@ -234,10 +587,16 @@ async function refreshReflection() {
 }
 
 const es = new EventSource("/events");
+es.onopen = () => setLiveState(true);
+es.onerror = () => setLiveState(false);
 es.onmessage = (msg) => {
   try {
     const data = JSON.parse(msg.data);
-    if (data.type === "ping" || data.type === "connected") {
+    if (data.type === "ping") {
+      return;
+    }
+    if (data.type === "connected") {
+      setLiveState(true);
       return;
     }
     void refresh();
@@ -254,6 +613,12 @@ es.onmessage = (msg) => {
 
 void refresh();
 setInterval(() => {
+  if (activeView === "tasks" && lastTasks.length) {
+    renderTasks(lastTasks);
+    if (selectedId) {
+      showDetail(lastTasks.find((t) => t.id === selectedId));
+    }
+  }
   void refresh();
   if (activeView === "memory") {
     void refreshMemory();

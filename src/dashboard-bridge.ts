@@ -40,7 +40,7 @@ async function forward(req: IncomingMessage, res: ServerResponse, socketPath: st
   res.end(upstream.body);
 }
 
-export async function startDashboardBridge(): Promise<void> {
+export async function startDashboardBridge(taskId?: string): Promise<void> {
   const socketPath = await resolveSocketPath();
   let idleTimer: NodeJS.Timeout | undefined;
 
@@ -75,7 +75,8 @@ export async function startDashboardBridge(): Promise<void> {
     throw new Error("dashboard bridge failed to bind");
   }
 
-  const url = `http://127.0.0.1:${address.port}`;
+  const base = `http://127.0.0.1:${address.port}`;
+  const url = taskId?.trim() ? `${base}/?task=${encodeURIComponent(taskId.trim())}` : base;
   console.log(`k2so: dashboard bridge ${url} (closes after ${IDLE_MS / 1000}s idle)`);
   spawn("xdg-open", [url], { stdio: "ignore", detached: true }).unref();
   resetIdle();

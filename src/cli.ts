@@ -94,7 +94,7 @@ async function main(): Promise<void> {
       break;
     }
     case "open":
-      await startDashboardBridge();
+      await startDashboardBridge(args[0]?.trim() || undefined);
       break;
     case "open-task": {
       const taskId = args[0]?.trim();
@@ -172,7 +172,7 @@ usage:
                                 submit a background task; --continue chains on a prior task's session
   k2so status                   list tasks
   k2so abort <task-id>          abort a queued or running task
-  k2so open                     open dashboard in browser (HTTP bridge)
+  k2so open [task-id]           open dashboard in browser (HTTP bridge)
   k2so open-task <task-id>      open task workspace folder
   k2so prune                    remove old task workspaces
   k2so bench                    show recent benchmark entries
