@@ -8,7 +8,7 @@ import { runDoctor, runInit, runUninstall } from "./init.js";
 import { runMemoryCli } from "./memory/cli.js";
 import { startDaemon } from "./daemon.js";
 import { daemonFetch } from "./client.js";
-import { startDashboardBridge } from "./dashboard-bridge.js";
+import { dashboardUrl, servePersistent, startDashboardBridge } from "./dashboard-bridge.js";
 import { packageRoot } from "./paths.js";
 import type { TaskRecord } from "./engine/interface.js";
 import type { BenchEntry } from "./bench.js";
@@ -103,9 +103,26 @@ async function main(): Promise<void> {
       console.log(`task ${taskId.slice(0, 8)} aborted`);
       break;
     }
-    case "open":
-      await startDashboardBridge(args[0]?.trim() || undefined);
+    case "dashboard":
+      await servePersistent();
       break;
+    case "open": {
+      // Prefer the persistent dashboard service; only spin up the transient
+      // bridge when nothing is listening at the configured HTTP port.
+      const url = await dashboardUrl(args[0]?.trim() || undefined);
+      const up = await fetch(url, { method: "HEAD" }).then(
+        (r) => r.ok || r.status === 405, // some servers reject HEAD on "/"
+        () => false,
+      );
+      if (up) {
+        console.log(`k2so: dashboard ${url}`);
+        spawn("xdg-open", [url], { stdio: "ignore", detached: true }).unref();
+      } else {
+        console.log("k2so: persistent dashboard down — starting transient bridge");
+        await startDashboardBridge(args[0]?.trim() || undefined);
+      }
+      break;
+    }
     case "open-task": {
       const taskId = args[0]?.trim();
       if (!taskId) {
@@ -179,11 +196,12 @@ usage:
   k2so doctor                   health check (non-mutating)
   k2so uninstall                remove K-2SO files (opencode.json untouched)
   k2so serve                    start daemon (Unix socket)
+  k2so dashboard                run persistent HTTP dashboard (127.0.0.1:7780)
   k2so ask [--type <id>] [--continue <task-id>] <text>
                                 submit a background task; --continue chains on a prior task's session
   k2so status                   list tasks
   k2so abort <task-id>          abort a queued or running task
-  k2so open [task-id]           open dashboard in browser (HTTP bridge)
+  k2so open [task-id]           open dashboard in browser (uses persistent service, falls back to transient)
   k2so open-task <task-id>      open task workspace folder
   k2so prune                    remove old task workspaces
   k2so bench                    show recent benchmark entries

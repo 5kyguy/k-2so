@@ -8,7 +8,7 @@ Background task agent for your desktop. K-2SO is the brains — it plans, resear
 
 - Accept instructions via CLI (`k2so ask "..."`) over a Unix domain socket API
 - Run tasks in the background through an OpenCode engine
-- Stream progress to a local web dashboard (`k2so open` starts a short-lived HTTP bridge)
+- Stream progress to a local web dashboard — a persistent HTTP bridge at `http://127.0.0.1:7780` (run via `k2so dashboard`, or the `k2so-dashboard.service` companion unit under R2-D2); `k2so open` opens it in your browser
 - Queue work with configurable concurrency limits; prune old workspaces with `k2so prune`
 - Remember context across tasks via local memory files (`SOUL.md`, `USER.md`, `MEMORY.md`, skills)
 
@@ -51,7 +51,7 @@ K-2SO is a companion that grows via local files in `~/.config/k2so/`:
 ```bash
 k2so memory show
 k2so memory edit user
-k2so open    # Memory + Reflection tabs in the dashboard
+k2so open    # open the dashboard (127.0.0.1:7780) in your browser
 ```
 
 Details: [`docs/MEMORY.md`](docs/MEMORY.md).

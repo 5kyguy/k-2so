@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
+import { loadProfile } from "./config.js";
 import { resolveSocketPath, socketRequest } from "./client.js";
 
 const IDLE_MS = 5 * 60 * 1000;
@@ -40,6 +41,27 @@ async function forward(req: IncomingMessage, res: ServerResponse, socketPath: st
   res.end(upstream.body);
 }
 
+/** Stable URL of the persistent dashboard (from [dashboard] profile config). */
+export async function dashboardUrl(taskId?: string): Promise<string> {
+  const profile = await loadProfile();
+  const base = `http://${profile.dashboard.bind}:${profile.dashboard.port}`;
+  return taskId?.trim() ? `${base}/?task=${encodeURIComponent(taskId.trim())}` : base;
+}
+
+function makeProxy(socketPath: string, onRequest: (req: IncomingMessage, res: ServerResponse) => void) {
+  return createServer((req, res) => {
+    onRequest(req, res);
+    void forward(req, res, socketPath).catch((err) => {
+      console.error("k2so: bridge forward error:", err);
+      if (!res.headersSent) {
+        res.statusCode = 502;
+      }
+      res.end();
+    });
+  });
+}
+
+/** On-demand transient bridge: random port, opens a browser, exits after IDLE_MS idle. */
 export async function startDashboardBridge(taskId?: string): Promise<void> {
   const socketPath = await resolveSocketPath();
   let idleTimer: NodeJS.Timeout | undefined;
@@ -55,16 +77,7 @@ export async function startDashboardBridge(taskId?: string): Promise<void> {
     }, IDLE_MS);
   };
 
-  const server = createServer((req, res) => {
-    resetIdle();
-    void forward(req, res, socketPath).catch((err) => {
-      console.error("k2so: bridge forward error:", err);
-      if (!res.headersSent) {
-        res.statusCode = 502;
-      }
-      res.end();
-    });
-  });
+  const server = makeProxy(socketPath, () => resetIdle());
 
   await new Promise<void>((resolve) => {
     server.listen(0, "127.0.0.1", () => resolve());
@@ -80,4 +93,36 @@ export async function startDashboardBridge(taskId?: string): Promise<void> {
   console.log(`k2so: dashboard bridge ${url} (closes after ${IDLE_MS / 1000}s idle)`);
   spawn("xdg-open", [url], { stdio: "ignore", detached: true }).unref();
   resetIdle();
+}
+
+/**
+ * Persistent dashboard: binds the fixed [dashboard] bind:port forever, no idle
+ * timeout, no browser launch. Intended to run under k2so-dashboard.service.
+ */
+export async function servePersistent(): Promise<void> {
+  const profile = await loadProfile();
+  if (!profile.dashboard.enabled) {
+    console.error("k2so: dashboard disabled in profile ([dashboard].enabled = false)");
+    process.exit(0);
+  }
+
+  const socketPath = await resolveSocketPath();
+  const server = makeProxy(socketPath, () => {});
+
+  await new Promise<void>((resolve, reject) => {
+    server.listen(profile.dashboard.port, profile.dashboard.bind, () => resolve());
+    server.on("error", reject);
+  });
+
+  const url = await dashboardUrl();
+  console.log(`k2so: dashboard listening on ${url} (persistent)`);
+
+  const shutdown = () => {
+    console.log("k2so: dashboard shutting down…");
+    server.close(() => process.exit(0));
+    // Don't hang forever if a connection won't drain.
+    setTimeout(() => process.exit(0), 2000).unref();
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 }

@@ -1,6 +1,6 @@
 {
   "name": "@5kyguy/k2so",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Background task agent for your desktop — the brains to your tool layer",
   "type": "module",
   "bin": {

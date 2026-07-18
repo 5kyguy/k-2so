@@ -14,6 +14,12 @@ export interface MemoryConfig {
   reflect_min_interval_ms?: number;
 }
 
+export interface DashboardConfig {
+  enabled: boolean;
+  bind: string;
+  port: number;
+}
+
 export interface K2soProfile {
   engine: {
     type: "opencode";
@@ -39,6 +45,7 @@ export interface K2soProfile {
     max_tasks?: number;
   };
   memory?: MemoryConfig;
+  dashboard: DashboardConfig;
 }
 
 const DEFAULT_PROFILE: K2soProfile = {
@@ -69,6 +76,11 @@ const DEFAULT_PROFILE: K2soProfile = {
     reflect_on_task_types: ["background"],
     compact_user_threshold: 20,
     reflect_min_interval_ms: 5 * 60 * 1000,
+  },
+  dashboard: {
+    enabled: true,
+    bind: "127.0.0.1",
+    port: 7780,
   },
 };
 
@@ -113,6 +125,11 @@ function normalizeProfile(raw: Partial<K2soProfile>): K2soProfile {
         raw.memory?.compact_user_threshold ?? DEFAULT_PROFILE.memory?.compact_user_threshold,
       reflect_min_interval_ms:
         raw.memory?.reflect_min_interval_ms ?? DEFAULT_PROFILE.memory?.reflect_min_interval_ms,
+    },
+    dashboard: {
+      enabled: raw.dashboard?.enabled ?? DEFAULT_PROFILE.dashboard.enabled,
+      bind: raw.dashboard?.bind ?? DEFAULT_PROFILE.dashboard.bind,
+      port: raw.dashboard?.port ?? DEFAULT_PROFILE.dashboard.port,
     },
   };
 }

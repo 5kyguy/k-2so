@@ -29,3 +29,10 @@ reflect_model = "zai-coding/glm-4.5-air"
 reflect_on_task_types = ["background"]
 compact_user_threshold = 20
 reflect_min_interval_ms = 300000
+
+[dashboard]
+# Persistent HTTP dashboard (loopback only). Run via `k2so dashboard` or the
+# k2so-dashboard.service companion unit. Set enabled = false to disable.
+enabled = true
+bind = "127.0.0.1"
+port = 7780
