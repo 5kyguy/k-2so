@@ -71,6 +71,10 @@ Profile path defaults to `~/.config/k2so/profile.toml`. Override with `K2SO_PROF
 
 See [`docs/OPENCODE.md`](docs/OPENCODE.md) and `templates/` for profile and agent templates.
 
+## Changelog
+
+See [`CHANGELOG.md`](CHANGELOG.md) or the [GitHub Releases](https://github.com/5kyguy/k-2so/releases) page.
+
 ## R2-D2 integration
 
 [R2-D2](https://github.com/5kyguy/r2-d2) ships `r2d2-mcp`, Hyprland hotkeys, and voice ingress that call into K-2SO. K-2SO itself stays platform-agnostic.

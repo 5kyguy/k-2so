@@ -1,0 +1,89 @@
+# Release workflow for @5kyguy/k2so.
+#
+# Triggered by pushing a `v*` tag (e.g. `git tag v0.1.2 && git push origin v0.1.2`).
+# Builds the package, publishes to npm via Trusted Publishing (OIDC, no token),
+# then creates a GitHub Release whose body is the matching section of CHANGELOG.md.
+#
+# Prerequisite (one-time, manual): register this repo as a Trusted Publisher on npm.
+#   npmjs.com -> @5kyguy/k2so -> Settings -> Trusted publishing -> GitHub Actions:
+#     Organization or user : 5kyguy
+#     Repository           : k-2so
+#     Workflow filename    : release.yml   (must match this file's name exactly)
+#     Environment name     : (leave blank)
+#   No NPM_TOKEN secret is needed — npm issues a short-lived publish credential
+#   per run via OIDC. Requires Node >= 22.14 / npm CLI >= 11.5.1 (matched below).
+#
+# Release notes are sourced from CHANGELOG.md — keep its `## [x.y.z]` entry up
+# to date before tagging. The job fails (before publish) if the section is missing.
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # create the GitHub Release
+  id-token: write # npm Trusted Publishing (OIDC)
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          # Trusted publishing requires Node >= 22.14 (npm CLI >= 11.5.1).
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Build
+        run: npm ci && npm run build
+
+      - name: Extract release notes from CHANGELOG.md
+        id: notes
+        env:
+          # GITHUB_REF_NAME is the tag name, e.g. "v0.1.2".
+          TAG: ${{ github.ref_name }}
+        run: |
+          # Strip a leading "v" to match "## [0.1.2]" in the changelog.
+          VERSION="${TAG#v}"
+          # Slice from the matching header up to (not including) the next "## ["
+          # header, or the trailing reference-link footer ("[0.1.x]: ...").
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { in_section = 1; next }
+            in_section && /^## \[/ { exit }
+            in_section && /^\[[0-9]/ { exit }
+            in_section { print }
+          ' CHANGELOG.md > /tmp/notes.md
+
+          if [ ! -s /tmp/notes.md ]; then
+            echo "::error::No CHANGELOG.md section found for version $VERSION (expected \"## [$VERSION]\"). Aborting before publish."
+            exit 1
+          fi
+
+          echo "Extracted notes for $VERSION:"
+          cat /tmp/notes.md
+          echo "path=/tmp/notes.md" >> "$GITHUB_OUTPUT"
+
+      # No NODE_AUTH_TOKEN: npm CLI auto-detects the OIDC environment and
+      # exchanges it for a short-lived publish token. Provenance is generated
+      # automatically for public packages from public repos via trusted publishing.
+      - name: Publish to npm
+        run: npm publish
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: ${{ steps.notes.outputs.path }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
