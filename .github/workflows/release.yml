@@ -11,7 +11,7 @@
 #     Workflow filename    : release.yml   (must match this file's name exactly)
 #     Environment name     : (leave blank)
 #   No NPM_TOKEN secret is needed — npm issues a short-lived publish credential
-#   per run via OIDC. Requires Node >= 22.14 / npm CLI >= 11.5.1 (matched below).
+#   per run via OIDC. Requires npm CLI >= 11.5.1 (ships with Node >= 24, set below).
 #
 # Release notes are sourced from CHANGELOG.md — keep its `## [x.y.z]` entry up
 # to date before tagging. The job fails (before publish) if the section is missing.
@@ -38,8 +38,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          # Trusted publishing requires Node >= 22.14 (npm CLI >= 11.5.1).
-          node-version: 22
+          # Trusted publishing requires npm CLI >= 11.5.1, which ships with
+          # Node >= 24 (Node 22 ships npm v10, which is too old and produces a
+          # misleading 404 on the publish PUT).
+          node-version: 24
           cache: npm
           registry-url: https://registry.npmjs.org
 
