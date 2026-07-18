@@ -14,7 +14,7 @@
     "mcp/memory/package.json"
   ],
   "scripts": {
-    "build": "tsc && npm run build --prefix mcp/memory && node scripts/copy-assets.mjs",
+    "build": "tsc && npm ci --prefix mcp/memory && npm run build --prefix mcp/memory && node scripts/copy-assets.mjs",
     "dev": "tsc --watch",
     "prepublishOnly": "npm run build",
     "start": "node dist/cli.js serve",
