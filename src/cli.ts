@@ -9,10 +9,20 @@ import { runMemoryCli } from "./memory/cli.js";
 import { startDaemon } from "./daemon.js";
 import { daemonFetch } from "./client.js";
 import { startDashboardBridge } from "./dashboard-bridge.js";
+import { packageRoot } from "./paths.js";
 import type { TaskRecord } from "./engine/interface.js";
 import type { BenchEntry } from "./bench.js";
 
 const [, , command, ...args] = process.argv;
+
+async function readVersion(): Promise<string> {
+  try {
+    const pkg = await readFile(join(packageRoot(), "package.json"), "utf8");
+    return (JSON.parse(pkg).version as string | undefined) ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 
 function parseAskArgs(argv: string[]): {
   taskType?: string;
@@ -157,8 +167,9 @@ async function main(): Promise<void> {
       }
       break;
     }
-    default:
-      console.log(`k2so — background desktop agent
+    default: {
+      const version = await readVersion();
+      console.log(`k2so — background desktop agent (v${version})
 
 Prerequisite: install and configure OpenCode yourself, then run k2so init.
 
@@ -179,6 +190,7 @@ usage:
   k2so memory show|edit|reset   inspect and edit memory files
 `);
       process.exit(command ? 1 : 0);
+    }
   }
 }
 
