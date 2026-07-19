@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 GitHub Releases for each version are published from the matching section below;
 see the [Releases page](https://github.com/5kyguy/k-2so/releases).
 
+## [Unreleased]
+
+### Fixed
+
+- **OpenCode event stream reconnect.** The live Activity SSE now retries with
+  backoff when OpenCode is down or the stream drops, instead of dying once on
+  cold-start `ECONNREFUSED`. Daemon startup also brings OpenCode up before
+  subscribing to `/event`, so the first connect usually succeeds quietly.
+
 ## [0.1.3] - 2026-07-19
 
 ### Added

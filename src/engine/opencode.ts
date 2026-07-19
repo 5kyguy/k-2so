@@ -3,6 +3,9 @@ import type { K2soProfile } from "../config.js";
 import { assemblePromptForTask } from "../memory/assemble.js";
 import type { AgentEngine, AgentEvent, TaskHandle, TaskOpts, Unsubscribe } from "./interface.js";
 
+const SSE_BACKOFF_MS = 500;
+const SSE_BACKOFF_MAX_MS = 10_000;
+
 function parseModel(model: string): { providerID: string; modelID: string } {
   const slash = model.indexOf("/");
   if (slash === -1) {
@@ -14,11 +17,27 @@ function parseModel(model: string): { providerID: string; modelID: string } {
   };
 }
 
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && err.name === "AbortError";
+}
+
+function isConnectionRefused(err: unknown): boolean {
+  if (!(err instanceof Error)) {
+    return false;
+  }
+  const cause = (err as Error & { cause?: { code?: string } }).cause;
+  if (cause?.code === "ECONNREFUSED") {
+    return true;
+  }
+  return /ECONNREFUSED|fetch failed/i.test(err.message);
+}
+
 export class OpenCodeEngine implements AgentEngine {
   readonly name = "opencode";
   private client;
   private listeners = new Set<(event: AgentEvent) => void>();
   private eventAbort?: AbortController;
+  private streamLoopRunning = false;
   private sessionToTask = new Map<string, string>();
 
   constructor(private profile: K2soProfile) {
@@ -95,7 +114,7 @@ export class OpenCodeEngine implements AgentEngine {
 
   subscribe(onEvent: (event: AgentEvent) => void): Unsubscribe {
     this.listeners.add(onEvent);
-    if (!this.eventAbort) {
+    if (!this.streamLoopRunning) {
       void this.startEventStream();
     }
     return () => {
@@ -114,39 +133,88 @@ export class OpenCodeEngine implements AgentEngine {
   }
 
   private async startEventStream(): Promise<void> {
-    this.eventAbort = new AbortController();
+    if (this.streamLoopRunning) {
+      return;
+    }
+    this.streamLoopRunning = true;
+
     const url = `${this.profile.engine.opencode_url}/event`;
+    let backoffMs = SSE_BACKOFF_MS;
+    let waitingLogged = false;
 
-    try {
-      const res = await fetch(url, {
-        headers: { Accept: "text/event-stream" },
-        signal: this.eventAbort.signal,
-      });
-      if (!res.ok || !res.body) {
-        return;
-      }
+    while (this.listeners.size > 0) {
+      this.eventAbort = new AbortController();
+      const signal = this.eventAbort.signal;
+      let established = false;
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
+      try {
+        const res = await fetch(url, {
+          headers: { Accept: "text/event-stream" },
+          signal,
+        });
+        if (!res.ok || !res.body) {
+          throw new Error(`event stream HTTP ${res.status || "no body"}`);
+        }
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
+        established = true;
+        backoffMs = SSE_BACKOFF_MS;
+        if (waitingLogged) {
+          console.log("k2so: event stream connected");
+          waitingLogged = false;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (this.listeners.size > 0) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          const chunks = buffer.split("\n\n");
+          buffer = chunks.pop() ?? "";
+
+          for (const chunk of chunks) {
+            this.handleSseChunk(chunk);
+          }
+        }
+      } catch (err) {
+        if (isAbortError(err) || signal.aborted) {
           break;
         }
-        buffer += decoder.decode(value, { stream: true });
-        const chunks = buffer.split("\n\n");
-        buffer = chunks.pop() ?? "";
-
-        for (const chunk of chunks) {
-          this.handleSseChunk(chunk);
+        if (isConnectionRefused(err)) {
+          if (!waitingLogged) {
+            console.warn("k2so: waiting for OpenCode event stream…");
+            waitingLogged = true;
+          }
+        } else if (established) {
+          console.warn(
+            "k2so: event stream ended, reconnecting:",
+            err instanceof Error ? err.message : String(err),
+          );
+        } else {
+          console.warn(
+            "k2so: event stream connect failed, retrying:",
+            err instanceof Error ? err.message : String(err),
+          );
         }
       }
-    } catch (err) {
-      if ((err as Error).name !== "AbortError") {
-        console.error("k2so: event stream ended:", err);
+
+      if (this.listeners.size === 0 || signal.aborted) {
+        break;
       }
+
+      await new Promise((r) => setTimeout(r, backoffMs));
+      backoffMs = Math.min(backoffMs * 2, SSE_BACKOFF_MAX_MS);
+    }
+
+    this.streamLoopRunning = false;
+    this.eventAbort = undefined;
+    // A listener may have re-subscribed while we were exiting.
+    if (this.listeners.size > 0) {
+      void this.startEventStream();
     }
   }
 

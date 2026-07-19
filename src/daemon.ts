@@ -18,11 +18,12 @@ export async function startDaemon(): Promise<void> {
   await bench.init();
 
   const manager = new TaskManager(profile, engine, bench);
-  await manager.init();
-
   const supervisor = new OpenCodeSupervisor(profile, engine, manager);
+  // Bring OpenCode up before subscribing to /event so the SSE stream
+  // does not die on a cold-start ECONNREFUSED with no reconnect.
   await supervisor.ensureReady();
   supervisor.start();
+  await manager.init();
 
   const app = createApi(manager, webRoot(), profile);
   const listener = getRequestListener(app.fetch);
