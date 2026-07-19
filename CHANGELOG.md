@@ -10,6 +10,13 @@ see the [Releases page](https://github.com/5kyguy/k-2so/releases).
 
 ## [Unreleased]
 
+### Added
+
+- **Notification actions.** Done-task `notify-send` notifications include **Open
+  result** (`k2so open <id>`) and **Open folder** (`k2so open-task <id>`)
+  buttons when using the default notify-send command (mako shows them as
+  actions). App-name is `k2so`.
+
 ### Fixed
 
 - **OpenCode event stream reconnect.** The live Activity SSE now retries with
