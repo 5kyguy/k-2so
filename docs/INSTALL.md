@@ -57,9 +57,12 @@ This removes only `agent.k2so` — providers and other MCP servers are untouched
 ```bash
 k2so serve          # start daemon (spawns opencode serve with memory MCP overlay)
 k2so ask "hello"    # submit a task
-k2so status
-k2so open           # dashboard
+k2so status         # list tasks
+k2so show <id>      # print the task response (fetches OpenCode if not stored yet)
+k2so open           # dashboard — Result panel shows the answer; ?task=<id> deep-links
 ```
+
+When a task completes, K-2SO stores the final assistant text on the task (`response`), writes `response.md` in the task workspace, and shows it in the dashboard Result panel (rendered as markdown). Notifications (when enabled) include a short preview and a dashboard deep link. Older done tasks without a stored response are fetched from the OpenCode session when you open them in the dashboard or run `k2so show`.
 
 ## Health check
 

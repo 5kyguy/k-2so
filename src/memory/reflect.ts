@@ -6,6 +6,7 @@ import type { TaskRecord } from "../engine/interface.js";
 import { memoryAppend, readLearnedBullets, replaceLearnedBullets, skillCreate, userProfileUpdate } from "./writers.js";
 import { loadMemory, loadUser } from "./loaders.js";
 import { resolveMemoryPaths } from "./paths.js";
+import { extractAssistantText, fetchSessionMessages, formatTranscript } from "./transcript.js";
 
 const REFLECTION_SYSTEM = `You are K-2SO's reflection subroutine. Given a completed task transcript
 and the current USER.md / MEMORY.md, decide what (if anything) is worth remembering.
@@ -17,8 +18,6 @@ const COMPACTION_SYSTEM = `You are K-2SO's memory compactor. Given a list of lea
 consolidate duplicates, drop contradictions (keep the most recent), and merge related facts.
 Return JSON only: { "bullets": string[] }. Each bullet must be a single line, no leading dash,
 no heading. Aim for at most 12 bullets. Preserve specific, durable facts over transient observations.`;
-
-const MAX_TRANSCRIPT_CHARS = 12_000;
 
 interface ReflectionResult {
   user_updates?: string[];
@@ -52,33 +51,6 @@ function parseModel(model: string): { providerID: string; modelID: string } {
   };
 }
 
-function truncate(text: string, max: number): string {
-  if (text.length <= max) {
-    return text;
-  }
-  return `${text.slice(0, max)}\n…[truncated]`;
-}
-
-function formatTranscript(
-  messages: Array<{ info: { role?: string }; parts: Array<{ type?: string; text?: string }> }>,
-): string {
-  const lines: string[] = [];
-
-  for (const message of messages) {
-    const role = message.info.role ?? "unknown";
-    const text = message.parts
-      .filter((part) => part.type === "text" && part.text?.trim())
-      .map((part) => part.text!.trim())
-      .join("\n");
-    if (!text) {
-      continue;
-    }
-    lines.push(`${role}: ${text}`);
-  }
-
-  return truncate(lines.join("\n\n"), MAX_TRANSCRIPT_CHARS);
-}
-
 function parseReflectionJson(text: string): ReflectionResult {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text);
   const raw = (fenced?.[1] ?? text).trim();
@@ -94,13 +66,6 @@ function parseCompactionJson(text: string): CompactionResult {
     throw new Error("compaction response missing bullets[]");
   }
   return parsed;
-}
-
-function extractAssistantText(parts: Array<{ type?: string; text?: string }>): string {
-  return parts
-    .filter((part) => part.type === "text" && part.text)
-    .map((part) => part.text!)
-    .join("\n");
 }
 
 async function appendReflectionLog(profile: K2soProfile, entry: ReflectionLogEntry): Promise<void> {
@@ -205,8 +170,7 @@ async function runReflection(task: TaskRecord, profile: K2soProfile): Promise<vo
 
   try {
     const client = createOpencodeClient({ baseUrl: profile.engine.opencode_url });
-    const messagesRes = await client.session.messages({ path: { id: task.sessionId } });
-    const messages = messagesRes.data ?? [];
+    const messages = await fetchSessionMessages(profile.engine.opencode_url, task.sessionId);
     const transcript = formatTranscript(messages);
 
     const memoryPaths = resolveMemoryPaths(profile);

@@ -8,6 +8,7 @@ Background task agent for your desktop. K-2SO is the brains — it plans, resear
 
 - Accept instructions via CLI (`k2so ask "..."`) over a Unix domain socket API
 - Run tasks in the background through an OpenCode engine
+- Persist the final answer on each done task and surface it in the dashboard Result panel, `k2so show <id>`, and `workspace/<id>/response.md`
 - Stream progress to a local web dashboard — a persistent HTTP bridge at `http://127.0.0.1:7780` (run via `k2so dashboard`, or the `k2so-dashboard.service` companion unit under R2-D2); `k2so open` opens it in your browser
 - Queue work with configurable concurrency limits; prune old workspaces with `k2so prune`
 - Remember context across tasks via local memory files (`SOUL.md`, `USER.md`, `MEMORY.md`, skills)
@@ -33,6 +34,7 @@ k2so init
 # 4. Run
 k2so serve
 k2so ask "Summarize what is in my Downloads folder"
+k2so show <task-id>   # read the answer when the task is done
 ```
 
 Upgrading from the old `install.sh` model? Run `k2so init --migrate-opencode` to move the agent to `~/.config/opencode/agents/k2so.md` and remove the legacy `agent.k2so` block from your config.

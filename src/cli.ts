@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import { loadProfile } from "./config.js";
 import { runDoctor, runInit, runUninstall } from "./init.js";
 import { runMemoryCli } from "./memory/cli.js";
+import { fetchTaskResponse } from "./memory/transcript.js";
 import { startDaemon } from "./daemon.js";
 import { daemonFetch } from "./client.js";
 import { dashboardUrl, servePersistent, startDashboardBridge } from "./dashboard-bridge.js";
@@ -14,6 +15,69 @@ import type { TaskRecord } from "./engine/interface.js";
 import type { BenchEntry } from "./bench.js";
 
 const [, , command, ...args] = process.argv;
+
+async function resolveTaskId(prefix: string): Promise<TaskRecord | undefined> {
+  const res = await daemonFetch("/tasks");
+  if (!res.ok) {
+    return undefined;
+  }
+  const tasks = (await res.json()) as TaskRecord[];
+  const exact = tasks.find((t) => t.id === prefix);
+  if (exact) {
+    return exact;
+  }
+  const matches = tasks.filter((t) => t.id.startsWith(prefix));
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+async function showTask(taskIdArg: string): Promise<void> {
+  const task = await resolveTaskId(taskIdArg);
+  if (!task) {
+    console.error("k2so: task not found — is the id correct and is k2so serve running?");
+    process.exit(1);
+  }
+  await printTask(task);
+}
+
+async function printTask(task: TaskRecord): Promise<void> {
+  console.log(`id:          ${task.id}`);
+  console.log(`status:      ${task.status}`);
+  console.log(`type:        ${task.taskType}`);
+  console.log(`created:     ${task.createdAt}`);
+  console.log(`updated:     ${task.updatedAt}`);
+  if (task.sessionId) {
+    console.log(`session:     ${task.sessionId}`);
+  }
+  if (task.error) {
+    console.log(`error:       ${task.error}`);
+  }
+  console.log(`instruction: ${task.instruction}`);
+  console.log("");
+
+  let response = task.response?.trim() ?? "";
+  if (!response && task.sessionId) {
+    try {
+      const profile = await loadProfile();
+      response = (await fetchTaskResponse(profile.engine.opencode_url, task.sessionId)).trim();
+      if (response) {
+        console.log("(fetched from OpenCode session — not yet stored on task)\n");
+      }
+    } catch (err) {
+      console.error(
+        `k2so: could not fetch OpenCode session: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  if (response) {
+    console.log("--- response ---");
+    console.log(response);
+  } else if (task.status === "done") {
+    console.log("(no response stored — open the workspace or check OpenCode session)");
+  } else {
+    console.log(`(no response yet — task is ${task.status})`);
+  }
+}
 
 async function readVersion(): Promise<string> {
   try {
@@ -87,6 +151,15 @@ async function main(): Promise<void> {
       for (const task of tasks) {
         console.log(`${task.id.slice(0, 8)}  ${task.status.padEnd(8)}  ${task.instruction.slice(0, 60)}`);
       }
+      break;
+    }
+    case "show": {
+      const taskId = args[0]?.trim();
+      if (!taskId) {
+        console.error("usage: k2so show <task-id>");
+        process.exit(1);
+      }
+      await showTask(taskId);
       break;
     }
     case "abort": {
@@ -188,8 +261,6 @@ async function main(): Promise<void> {
       const version = await readVersion();
       console.log(`k2so — background desktop agent (v${version})
 
-Prerequisite: install and configure OpenCode yourself, then run k2so init.
-
 usage:
   k2so init [--force] [--migrate-opencode]
                                 register K-2SO; --migrate-opencode removes legacy agent.k2so
@@ -200,6 +271,7 @@ usage:
   k2so ask [--type <id>] [--continue <task-id>] <text>
                                 submit a background task; --continue chains on a prior task's session
   k2so status                   list tasks
+  k2so show <task-id>           print task status and response (fetches OpenCode if needed)
   k2so abort <task-id>          abort a queued or running task
   k2so open [task-id]           open dashboard in browser (uses persistent service, falls back to transient)
   k2so open-task <task-id>      open task workspace folder

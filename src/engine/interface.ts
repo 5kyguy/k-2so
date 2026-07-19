@@ -30,6 +30,8 @@ export interface TaskRecord {
   createdAt: string;
   updatedAt: string;
   error?: string;
+  /** Final assistant text captured when the task completes. */
+  response?: string;
   events: AgentEvent[];
   parentTaskId?: string;
 }

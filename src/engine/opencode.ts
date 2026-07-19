@@ -159,9 +159,14 @@ export class OpenCodeEngine implements AgentEngine {
     try {
       const payload = JSON.parse(dataLine.slice(6)) as {
         type?: string;
-        properties?: { sessionID?: string; part?: { type?: string; tool?: string } };
+        properties?: {
+          sessionID?: string;
+          part?: { type?: string; tool?: string; sessionID?: string };
+        };
       };
-      const sessionId = payload.properties?.sessionID;
+      const part = payload.properties?.part;
+      // OpenCode may put sessionID on properties (schema v1) or only on the part (SDK EventMessagePartUpdated).
+      const sessionId = payload.properties?.sessionID ?? part?.sessionID;
       if (!sessionId) {
         return;
       }
@@ -170,23 +175,27 @@ export class OpenCodeEngine implements AgentEngine {
         return;
       }
 
-      if (payload.type === "message.part.updated") {
-        const part = payload.properties?.part;
-        if (part?.type === "tool") {
-          this.emit({
-            type: "tool",
-            taskId,
-            at: new Date().toISOString(),
-            data: part,
-          });
-        } else {
-          this.emit({
-            type: "message",
-            taskId,
-            at: new Date().toISOString(),
-            data: part,
-          });
-        }
+      if (payload.type !== "message.part.updated" || !part) {
+        return;
+      }
+
+      if (part.type === "tool") {
+        this.emit({
+          type: "tool",
+          taskId,
+          at: new Date().toISOString(),
+          data: part,
+        });
+        return;
+      }
+
+      if (part.type === "text" || part.type === "reasoning") {
+        this.emit({
+          type: "message",
+          taskId,
+          at: new Date().toISOString(),
+          data: part,
+        });
       }
     } catch {
       // ignore malformed SSE payloads

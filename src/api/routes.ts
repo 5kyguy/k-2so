@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { K2soProfile } from "../config.js";
 import { getMemorySnapshot, readReflectionLog } from "../memory/api.js";
+import { fetchTaskResponse } from "../memory/transcript.js";
 import type { TaskManager } from "../tasks/manager.js";
 
 export function createApi(manager: TaskManager, webRoot: string, profile: K2soProfile): Hono {
@@ -18,6 +19,8 @@ export function createApi(manager: TaskManager, webRoot: string, profile: K2soPr
     }
   };
 
+  manager.setBroadcaster(broadcast);
+
   app.get("/health", (c) => c.json({ ok: true }));
 
   app.get("/tasks", (c) => c.json(manager.list()));
@@ -28,6 +31,29 @@ export function createApi(manager: TaskManager, webRoot: string, profile: K2soPr
       return c.json({ error: "not found" }, 404);
     }
     return c.json(task);
+  });
+
+  app.get("/tasks/:id/response", async (c) => {
+    const id = c.req.param("id");
+    const task = manager.get(id) ?? manager.list().find((t) => t.id.startsWith(id));
+    if (!task) {
+      return c.json({ error: "not found" }, 404);
+    }
+    if (task.response?.trim()) {
+      return c.json({ response: task.response, source: "stored" as const });
+    }
+    if (!task.sessionId) {
+      return c.json({ response: "", source: "none" as const });
+    }
+    try {
+      const response = await fetchTaskResponse(profile.engine.opencode_url, task.sessionId);
+      return c.json({
+        response,
+        source: response.trim() ? ("opencode" as const) : ("none" as const),
+      });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 502);
+    }
   });
 
   app.post("/tasks", async (c) => {

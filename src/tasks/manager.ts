@@ -4,6 +4,7 @@ import type { K2soProfile } from "../config.js";
 import type { AgentEngine, AgentEvent, TaskRecord } from "../engine/interface.js";
 import type { BenchLogger } from "../bench.js";
 import { reflectOnTask } from "../memory/reflect.js";
+import { fetchTaskResponse } from "../memory/transcript.js";
 import { notifyTaskDone } from "../notify.js";
 import { TaskStore } from "./store.js";
 
@@ -20,6 +21,7 @@ export class TaskManager {
   private store: TaskStore;
   private unsubscribe?: () => void;
   private lastReflectAtMs = 0;
+  private broadcast?: (payload: unknown) => void;
 
   constructor(
     private profile: K2soProfile,
@@ -27,6 +29,14 @@ export class TaskManager {
     private bench?: BenchLogger,
   ) {
     this.store = new TaskStore(profile.daemon.state);
+  }
+
+  setBroadcaster(fn: (payload: unknown) => void): void {
+    this.broadcast = fn;
+  }
+
+  private emitChange(type: string, task: TaskRecord): void {
+    this.broadcast?.({ type, task });
   }
 
   async init(): Promise<void> {
@@ -247,6 +257,11 @@ export class TaskManager {
 
     this.store.upsert(task);
     await this.store.save();
+
+    this.emitChange("task.updated", task);
+    if (event.type === "done") {
+      this.emitChange("task.done", task);
+    }
   }
 
   private shouldReflect(task: TaskRecord): boolean {
@@ -257,7 +272,7 @@ export class TaskManager {
     if (types && !types.includes(task.taskType)) {
       return false;
     }
-    if (!task.events.some((e) => e.type === "message")) {
+    if (!task.response && !task.events.some((e) => e.type === "message")) {
       return false;
     }
     const minInterval = this.profile.memory?.reflect_min_interval_ms ?? 0;
@@ -265,6 +280,25 @@ export class TaskManager {
       return false;
     }
     return true;
+  }
+
+  private async captureResponse(task: TaskRecord): Promise<void> {
+    if (task.status !== "done" || !task.sessionId) {
+      return;
+    }
+
+    try {
+      const response = await fetchTaskResponse(this.profile.engine.opencode_url, task.sessionId);
+      if (!response.trim()) {
+        return;
+      }
+      task.response = response;
+      const workspace = join(this.profile.daemon.workspace, task.id);
+      await mkdir(workspace, { recursive: true });
+      await writeFile(join(workspace, "response.md"), response, "utf8");
+    } catch (err) {
+      console.error("k2so: failed to capture task response:", err);
+    }
   }
 
   private async finalizeTask(task: TaskRecord): Promise<void> {
@@ -276,6 +310,8 @@ export class TaskManager {
       toolCalls,
       turns: task.events.filter((e) => e.type === "message").length,
     });
+
+    await this.captureResponse(task);
     notifyTaskDone(this.profile, task);
 
     if (this.profile.memory?.reflect && this.shouldReflect(task)) {

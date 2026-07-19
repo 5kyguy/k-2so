@@ -4,6 +4,22 @@ let expandedMemoryKey = null;
 let expandedEventKeys = new Set();
 let lastTasks = [];
 let sseConnected = false;
+/** Client-side cache for responses fetched from OpenCode (older tasks). */
+const responseCache = new Map();
+
+function taskIdFromQuery() {
+  try {
+    const id = new URLSearchParams(window.location.search).get("task");
+    return id && id.trim() ? id.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+const deepLinkTaskId = taskIdFromQuery();
+if (deepLinkTaskId) {
+  selectedId = deepLinkTaskId;
+}
 
 const tasksEl = document.getElementById("tasks");
 const detailEl = document.getElementById("detail");
@@ -194,7 +210,7 @@ function summarizeEvent(event) {
       return { title: "Error", body: String(msg), muted: false };
     }
     case "done": {
-      return { title: "Done", body: "Task completed successfully", muted: false };
+      return { title: "Done", body: "Task completed", muted: false };
     }
     default:
       return { title: event.type, body: JSON.stringify(data, null, 2), muted: true };
@@ -378,6 +394,274 @@ function renderTimeline(task) {
     </div>`;
 }
 
+function inlineMarkdown(text) {
+  let s = escapeHtml(text);
+  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+  s = s.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+  return s;
+}
+
+function isTableSeparator(line) {
+  return /^\s*\|?[\s:|-]+\|[\s:|-]*\|?\s*$/.test(line) && line.includes("-");
+}
+
+function parseTableRow(line) {
+  const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  return trimmed.split("|").map((cell) => cell.trim());
+}
+
+function renderMarkdown(md) {
+  const lines = String(md).replace(/\r\n/g, "\n").split("\n");
+  const html = [];
+  let i = 0;
+  let inUl = false;
+  let inOl = false;
+  let paragraph = [];
+
+  const closeLists = () => {
+    if (inUl) {
+      html.push("</ul>");
+      inUl = false;
+    }
+    if (inOl) {
+      html.push("</ol>");
+      inOl = false;
+    }
+  };
+
+  const flushParagraph = () => {
+    if (!paragraph.length) {
+      return;
+    }
+    html.push(`<p>${inlineMarkdown(paragraph.join(" "))}</p>`);
+    paragraph = [];
+  };
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (line.startsWith("```")) {
+      flushParagraph();
+      closeLists();
+      const lang = escapeHtml(line.slice(3).trim());
+      i++;
+      const code = [];
+      while (i < lines.length && !lines[i].startsWith("```")) {
+        code.push(lines[i]);
+        i++;
+      }
+      i++;
+      html.push(
+        `<pre${lang ? ` data-lang="${lang}"` : ""}><code>${escapeHtml(code.join("\n"))}</code></pre>`,
+      );
+      continue;
+    }
+
+    if (/^\s*\|/.test(line) && i + 1 < lines.length && isTableSeparator(lines[i + 1])) {
+      flushParagraph();
+      closeLists();
+      const header = parseTableRow(line);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && /^\s*\|/.test(lines[i]) && lines[i].trim()) {
+        rows.push(parseTableRow(lines[i]));
+        i++;
+      }
+      html.push("<table><thead><tr>");
+      for (const cell of header) {
+        html.push(`<th>${inlineMarkdown(cell)}</th>`);
+      }
+      html.push("</tr></thead><tbody>");
+      for (const row of rows) {
+        html.push("<tr>");
+        for (let c = 0; c < header.length; c++) {
+          html.push(`<td>${inlineMarkdown(row[c] ?? "")}</td>`);
+        }
+        html.push("</tr>");
+      }
+      html.push("</tbody></table>");
+      continue;
+    }
+
+    if (/^\s*---+\s*$/.test(line) || /^\s*\*\*\*+\s*$/.test(line)) {
+      flushParagraph();
+      closeLists();
+      html.push("<hr>");
+      i++;
+      continue;
+    }
+
+    const heading = /^(#{1,4})\s+(.+)$/.exec(line);
+    if (heading) {
+      flushParagraph();
+      closeLists();
+      const level = heading[1].length;
+      html.push(`<h${level}>${inlineMarkdown(heading[2].trim())}</h${level}>`);
+      i++;
+      continue;
+    }
+
+    const ul = /^\s*[-*+]\s+(.+)$/.exec(line);
+    if (ul) {
+      flushParagraph();
+      if (inOl) {
+        html.push("</ol>");
+        inOl = false;
+      }
+      if (!inUl) {
+        html.push("<ul>");
+        inUl = true;
+      }
+      html.push(`<li>${inlineMarkdown(ul[1])}</li>`);
+      i++;
+      continue;
+    }
+
+    const ol = /^\s*\d+[.)]\s+(.+)$/.exec(line);
+    if (ol) {
+      flushParagraph();
+      if (inUl) {
+        html.push("</ul>");
+        inUl = false;
+      }
+      if (!inOl) {
+        html.push("<ol>");
+        inOl = true;
+      }
+      html.push(`<li>${inlineMarkdown(ol[1])}</li>`);
+      i++;
+      continue;
+    }
+
+    const quote = /^\s*>\s?(.*)$/.exec(line);
+    if (quote) {
+      flushParagraph();
+      closeLists();
+      const quoted = [quote[1]];
+      i++;
+      while (i < lines.length) {
+        const next = /^\s*>\s?(.*)$/.exec(lines[i]);
+        if (!next) {
+          break;
+        }
+        quoted.push(next[1]);
+        i++;
+      }
+      html.push(`<blockquote><p>${inlineMarkdown(quoted.join(" "))}</p></blockquote>`);
+      continue;
+    }
+
+    if (!line.trim()) {
+      flushParagraph();
+      closeLists();
+      i++;
+      continue;
+    }
+
+    closeLists();
+    paragraph.push(line.trim());
+    i++;
+  }
+
+  flushParagraph();
+  closeLists();
+  return html.join("\n");
+}
+
+function resultMarkup(response, source) {
+  const sourceLabel =
+    source === "opencode"
+      ? `<span class="result-source">from OpenCode session</span>`
+      : "";
+  return `
+    <div class="section-head" style="padding:0 0.85rem">
+      <h2>Result</h2>
+      ${sourceLabel}
+    </div>
+    <div class="result-block">
+      <div class="result-md">${renderMarkdown(response)}</div>
+    </div>`;
+}
+
+function resolveTaskResponse(task) {
+  const stored = (task.response || "").trim();
+  if (stored) {
+    return { response: stored, source: "stored" };
+  }
+  const cached = responseCache.get(task.id);
+  if (cached?.response) {
+    return cached;
+  }
+  return null;
+}
+
+function renderResult(task) {
+  const resolved = resolveTaskResponse(task);
+  if (resolved) {
+    return resultMarkup(resolved.response, resolved.source);
+  }
+  if (task.status === "done" && task.sessionId) {
+    return `
+      <div class="section-head" style="padding:0 0.85rem">
+        <h2>Result</h2>
+      </div>
+      <div class="result-block empty-result" data-fetch-response="${escapeHtml(task.id)}">
+        Loading response…
+      </div>`;
+  }
+  if (task.status === "done") {
+    return `
+      <div class="section-head" style="padding:0 0.85rem">
+        <h2>Result</h2>
+      </div>
+      <div class="result-block empty-result">
+        No response stored. Try <code>k2so show ${escapeHtml(shortId(task.id))}</code>.
+      </div>`;
+  }
+  return "";
+}
+
+async function hydrateTaskResponse(taskId) {
+  const slot = detailEl.querySelector(`[data-fetch-response="${CSS.escape(taskId)}"]`);
+  if (!slot) {
+    return;
+  }
+  const head = slot.previousElementSibling?.classList?.contains("section-head")
+    ? slot.previousElementSibling
+    : null;
+  try {
+    const res = await fetch(`/tasks/${encodeURIComponent(taskId)}/response`);
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    const response = (data.response || "").trim();
+    if (!response) {
+      slot.textContent = "No response available for this task.";
+      return;
+    }
+    const source = data.source || "opencode";
+    responseCache.set(taskId, { response, source });
+    const task = lastTasks.find((t) => t.id === taskId);
+    if (task) {
+      task.response = response;
+    }
+    const tmp = document.createElement("div");
+    tmp.innerHTML = resultMarkup(response, source);
+    const nodes = [...tmp.children];
+    if (head && nodes[0] && nodes[1]) {
+      head.replaceWith(nodes[0]);
+      slot.replaceWith(nodes[1]);
+    } else {
+      slot.replaceWith(...nodes);
+    }
+  } catch (err) {
+    slot.textContent = `Failed to load response: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
 function showDetail(task) {
   if (!task) {
     detailEl.innerHTML = `<div class="detail-empty">Select a task to view activity</div>`;
@@ -431,6 +715,7 @@ function showDetail(task) {
         </div>
       </div>
       ${task.error ? `<div class="error-banner">${escapeHtml(task.error)}</div>` : ""}
+      ${renderResult(task)}
       <div class="section-head" style="padding:0 0.85rem">
         <h2>Activity</h2>
         <span class="task-count">${(task.events ?? []).length} events</span>
@@ -456,6 +741,10 @@ function showDetail(task) {
       }
       showDetail(task);
     });
+  }
+
+  if (detailEl.querySelector("[data-fetch-response]")) {
+    void hydrateTaskResponse(task.id);
   }
 }
 
@@ -552,11 +841,18 @@ async function refresh() {
   const res = await fetch("/tasks");
   const tasks = await res.json();
 
-  if (!selectedId) {
+  if (selectedId) {
+    const match =
+      tasks.find((t) => t.id === selectedId) ||
+      tasks.find((t) => t.id.startsWith(selectedId));
+    if (match) {
+      selectedId = match.id;
+    } else if (!deepLinkTaskId || selectedId !== deepLinkTaskId) {
+      selectedId = pickInitialTask(tasks);
+      expandedEventKeys.clear();
+    }
+  } else {
     selectedId = pickInitialTask(tasks);
-  } else if (!tasks.some((t) => t.id === selectedId)) {
-    selectedId = pickInitialTask(tasks);
-    expandedEventKeys.clear();
   }
 
   renderTasks(tasks);

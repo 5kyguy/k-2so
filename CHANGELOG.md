@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 GitHub Releases for each version are published from the matching section below;
 see the [Releases page](https://github.com/5kyguy/k-2so/releases).
 
+## [0.1.3] - 2026-07-19
+
+### Added
+
+- **Task response presentation.** When a task completes, K-2SO captures the final
+  assistant text onto the task record, writes `workspace/<id>/response.md`, and
+  surfaces it in the CLI and dashboard.
+  - New `k2so show <task-id>` prints status and response; if nothing is stored
+    yet, it fetches the OpenCode session transcript on the fly (covers older
+    done tasks).
+  - Dashboard **Result** panel renders the response as markdown (headings, lists,
+    tables, code, links). Deep-link with `/?task=<id>` or `k2so open <id>`.
+  - `GET /tasks/:id/response` returns the stored answer or falls back to OpenCode.
+  - Completion notifications (when enabled) include a short preview and a
+    dashboard deep link.
+
+### Fixed
+
+- Live activity SSE now resolves `sessionID` from the message part when OpenCode
+  omits it on the event properties — tool/message timeline events record again.
+
 ## [0.1.2] - 2026-07-18
 
 ### Added
@@ -58,6 +79,7 @@ see the [Releases page](https://github.com/5kyguy/k-2so/releases).
 - **Session chaining.** `k2so ask --continue <task-id>` chains on a prior task's
   session.
 
+[0.1.3]: https://github.com/5kyguy/k-2so/releases/tag/v0.1.3
 [0.1.2]: https://github.com/5kyguy/k-2so/releases/tag/v0.1.2
 [0.1.1]: https://github.com/5kyguy/k-2so/releases/tag/v0.1.1
 [0.1.0]: https://github.com/5kyguy/k-2so/releases/tag/v0.1.0
