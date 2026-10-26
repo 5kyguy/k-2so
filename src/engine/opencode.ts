@@ -62,10 +62,11 @@ export class OpenCodeEngine implements AgentEngine {
   async startTask(instruction: string, opts: TaskOpts): Promise<TaskHandle> {
     const taskId = opts.taskId;
     const title = instruction.trim().slice(0, 80) || "K-2SO task";
+    const agent = opts.agent ?? this.profile.agent.name;
     const session = await this.client.session.create({
       title,
       ...(opts.parentSessionId ? { parentID: opts.parentSessionId } : {}),
-      agent: opts.agent ?? this.profile.agent.name,
+      agent,
       model: parseModel(opts.model ?? this.profile.agent.default_model),
       location: { directory: this.taskWorkspace(taskId) },
     });
@@ -81,7 +82,7 @@ export class OpenCodeEngine implements AgentEngine {
 
     const promptText = await assemblePromptForTask(this.profile, instruction);
 
-    void this.runPrompt(taskId, sessionId, promptText);
+    void this.runPrompt(taskId, sessionId, agent, promptText);
 
     return { id: taskId, sessionId };
   }
@@ -123,7 +124,12 @@ export class OpenCodeEngine implements AgentEngine {
    * The v2 prompt endpoint admits input asynchronously; completion is the
    * session.wait call, and the response is read from the message log.
    */
-  private async runPrompt(taskId: string, sessionId: string, promptText: string): Promise<void> {
+  private async runPrompt(
+    taskId: string,
+    sessionId: string,
+    agent: string,
+    promptText: string,
+  ): Promise<void> {
     try {
       await this.client.session.prompt({ sessionID: sessionId, text: promptText });
       await this.client.session.wait({ sessionID: sessionId });
@@ -131,11 +137,22 @@ export class OpenCodeEngine implements AgentEngine {
       const messages = await fetchSessionMessages(this.profile, sessionId);
       const response = extractLastAssistantResponse(messages).trim();
       if (!response) {
+        // v2 accepts unknown agent names at session create but never delivers
+        // their input — surface that case explicitly instead of a generic error.
+        let message = "OpenCode finished the task without any assistant text";
+        try {
+          const inbox = await this.client.session.inbox.list({ sessionID: sessionId });
+          if (inbox.some((item) => item.type === "user")) {
+            message = `prompt was queued but never delivered — agent '${agent}' is not registered with OpenCode (run: k2so init)`;
+          }
+        } catch {
+          // keep the generic message
+        }
         this.emit({
           type: "error",
           taskId,
           at: new Date().toISOString(),
-          data: { message: "OpenCode finished the task without any assistant text" },
+          data: { message },
         });
         return;
       }

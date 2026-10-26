@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 GitHub Releases for each version are published from the matching section below;
 see the [Releases page](https://github.com/5kyguy/k-2so/releases).
 
+## [0.1.7] - 2026-10-26
+
+### Fixed
+
+- **Actionable error for unregistered agents.** OpenCode v2 accepts an unknown
+  agent name when creating a session but then silently never delivers the
+  prompt (it stays queued in the session inbox). Tasks that end with no
+  assistant response now check the inbox and report:
+  `prompt was queued but never delivered — agent 'k2so' is not registered with
+  OpenCode (run: k2so init)` instead of a generic "no assistant text" error.
+
 ## [0.1.6] - 2026-10-26
 
 ### Fixed
@@ -119,6 +130,7 @@ see the [Releases page](https://github.com/5kyguy/k-2so/releases).
 - **Session chaining.** `k2so ask --continue <task-id>` chains on a prior task's
   session.
 
+[0.1.7]: https://github.com/5kyguy/k-2so/releases/tag/v0.1.7
 [0.1.6]: https://github.com/5kyguy/k-2so/releases/tag/v0.1.6
 [0.1.5]: https://github.com/5kyguy/k-2so/releases/tag/v0.1.5
 [0.1.3]: https://github.com/5kyguy/k-2so/releases/tag/v0.1.3
