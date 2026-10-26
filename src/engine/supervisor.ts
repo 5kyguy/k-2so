@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import type { K2soProfile } from "../config.js";
+import { ensureServerPassword } from "./auth.js";
 import { opencodeConfigOverlay } from "../init.js";
 import type { OpenCodeEngine } from "./opencode.js";
 import type { TaskManager } from "../tasks/manager.js";
@@ -58,6 +59,7 @@ export class OpenCodeSupervisor {
         env: {
           ...process.env,
           OPENCODE_CONFIG_CONTENT: opencodeConfigOverlay(),
+          OPENCODE_SERVER_PASSWORD: ensureServerPassword(this.profile.daemon.state),
         },
       });
 

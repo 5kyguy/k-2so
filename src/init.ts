@@ -46,6 +46,23 @@ async function commandOnPath(command: string): Promise<boolean> {
   });
 }
 
+function commandOutput(command: string, args: string[]): Promise<string> {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "ignore"] });
+    let out = "";
+    child.stdout.on("data", (chunk) => (out += chunk));
+    child.on("close", () => resolve(out.trim()));
+    child.on("error", () => resolve(""));
+  });
+}
+
+/** Major version of the `opencode` binary on PATH (0 when unknown). */
+async function opencodeMajorVersion(): Promise<number> {
+  const out = await commandOutput("opencode", ["--version"]);
+  const match = /v(\d+)\./.exec(out);
+  return match ? Number(match[1]) : 0;
+}
+
 async function seedFile(dest: string, templateRel: string, force: boolean): Promise<"created" | "skipped" | "overwritten"> {
   const template = join(templatesDir(), templateRel);
   if (await exists(dest)) {
@@ -181,6 +198,16 @@ export async function runDoctor(): Promise<void> {
     label: "opencode on PATH",
     status: opencodeOk ? "ok" : "fail",
     detail: opencodeOk ? "found" : "missing — https://opencode.ai/install",
+  });
+
+  const opencodeMajor = opencodeOk ? await opencodeMajorVersion() : 0;
+  checks.push({
+    label: "opencode v2+",
+    status: opencodeMajor >= 2 ? "ok" : "fail",
+    detail:
+      opencodeMajor >= 2
+        ? `v2 engine (${opencodeMajor}.x)`
+        : `K-2SO speaks the OpenCode v2 API — found ${opencodeMajor > 0 ? `v${opencodeMajor}.x` : "unknown version"}; upgrade OpenCode`,
   });
 
   const configPath = paths.opencodeConfig();

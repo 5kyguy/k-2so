@@ -16,7 +16,7 @@ Background task agent for your desktop. K-2SO is the brains — it plans, resear
 ## Requirements
 
 - Node.js 20+
-- [OpenCode](https://opencode.ai) installed and configured with your LLM provider
+- [OpenCode](https://opencode.ai) **v2 or newer** (`opencode --version`), installed and configured with your LLM provider — K-2SO drives the OpenCode v2 HTTP API
 - An MCP server for platform-specific tools (optional for testing)
 
 ## Install

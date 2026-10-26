@@ -1,8 +1,14 @@
-import { createOpencodeClient } from "@opencode-ai/sdk";
+import { OpenCode } from "@opencode/client";
+import type { K2soProfile } from "../config.js";
+import { opencodeHeaders, readServerPasswordSync } from "../engine/auth.js";
 
 export type TranscriptMessage = {
-  info: { role?: string };
-  parts: Array<{ type?: string; text?: string }>;
+  /** "user" | "assistant" | "system" | … */
+  type?: string;
+  /** Plain text of user messages. */
+  text?: string;
+  /** Assistant message content parts. */
+  content?: Array<{ type?: string; text?: string }>;
 };
 
 export const MAX_TRANSCRIPT_CHARS = 12_000;
@@ -25,10 +31,10 @@ export function extractAssistantText(parts: Array<{ type?: string; text?: string
 export function extractLastAssistantResponse(messages: TranscriptMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i]!;
-    if (message.info.role !== "assistant") {
+    if (message.type !== "assistant") {
       continue;
     }
-    const text = extractAssistantText(message.parts).trim();
+    const text = extractAssistantText(message.content ?? []).trim();
     if (text) {
       return text;
     }
@@ -36,15 +42,19 @@ export function extractLastAssistantResponse(messages: TranscriptMessage[]): str
   return "";
 }
 
+function messageText(message: TranscriptMessage): string {
+  if (typeof message.text === "string" && message.text.trim()) {
+    return message.text.trim();
+  }
+  return extractAssistantText(message.content ?? []).trim();
+}
+
 export function formatTranscript(messages: TranscriptMessage[]): string {
   const lines: string[] = [];
 
   for (const message of messages) {
-    const role = message.info.role ?? "unknown";
-    const text = message.parts
-      .filter((part) => part.type === "text" && part.text?.trim())
-      .map((part) => part.text!.trim())
-      .join("\n");
+    const role = message.type ?? "unknown";
+    const text = messageText(message);
     if (!text) {
       continue;
     }
@@ -54,31 +64,47 @@ export function formatTranscript(messages: TranscriptMessage[]): string {
   return truncate(lines.join("\n\n"), MAX_TRANSCRIPT_CHARS);
 }
 
-/** Human-readable message from a non-throwing OpenCode SDK error payload. */
-export function sdkErrorMessage(error: unknown): string {
-  const message = (error as { data?: { message?: string } } | undefined)?.data?.message;
-  if (message) {
-    return message;
-  }
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
+function makeClient(profile: K2soProfile) {
+  return OpenCode.make({
+    baseUrl: profile.engine.opencode_url,
+    headers: opencodeHeaders(readServerPasswordSync(profile.daemon.state)),
+  });
 }
 
 export async function fetchSessionMessages(
-  opencodeUrl: string,
+  profile: K2soProfile,
   sessionId: string,
 ): Promise<TranscriptMessage[]> {
-  const client = createOpencodeClient({ baseUrl: opencodeUrl });
-  const messagesRes = await client.session.messages({ path: { id: sessionId } });
-  if (messagesRes.error) {
-    throw new Error(`OpenCode session.messages failed: ${sdkErrorMessage(messagesRes.error)}`);
-  }
-  return (messagesRes.data ?? []) as TranscriptMessage[];
+  const client = makeClient(profile);
+  const res = await client.message.list({ sessionID: sessionId });
+  return res.data as TranscriptMessage[];
 }
 
-export async function fetchTaskResponse(opencodeUrl: string, sessionId: string): Promise<string> {
-  const messages = await fetchSessionMessages(opencodeUrl, sessionId);
+export async function fetchTaskResponse(profile: K2soProfile, sessionId: string): Promise<string> {
+  const messages = await fetchSessionMessages(profile, sessionId);
   return extractLastAssistantResponse(messages);
+}
+
+/**
+ * Run one prompt through a fresh session and return the final assistant text.
+ * Used by the memory reflection flows.
+ */
+export async function runOneShotPrompt(
+  profile: K2soProfile,
+  opts: {
+    title: string;
+    system?: string;
+    text: string;
+    model?: { providerID: string; id: string };
+  },
+): Promise<string> {
+  const client = makeClient(profile);
+  const session = await client.session.create({
+    title: opts.title,
+    ...(opts.model ? { model: opts.model } : {}),
+  });
+  const text = opts.system ? `${opts.system}\n\n\n${opts.text}` : opts.text;
+  await client.session.prompt({ sessionID: session.id, text });
+  await client.session.wait({ sessionID: session.id });
+  return fetchTaskResponse(profile, session.id);
 }

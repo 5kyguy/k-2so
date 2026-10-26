@@ -1,20 +1,26 @@
-import { createOpencodeClient } from "@opencode-ai/sdk";
+import { OpenCode } from "@opencode/client";
 import type { K2soProfile } from "../config.js";
 import { assemblePromptForTask } from "../memory/assemble.js";
-import { extractAssistantText, sdkErrorMessage } from "../memory/transcript.js";
+import { extractLastAssistantResponse, fetchSessionMessages } from "../memory/transcript.js";
+import { ensureServerPassword, opencodeHeaders } from "./auth.js";
 import type { AgentEngine, AgentEvent, TaskHandle, TaskOpts, Unsubscribe } from "./interface.js";
 
-const SSE_BACKOFF_MS = 500;
-const SSE_BACKOFF_MAX_MS = 10_000;
+const EVENT_RETRY_MS = 500;
+const EVENT_RETRY_MAX_MS = 10_000;
 
-function parseModel(model: string): { providerID: string; modelID: string } {
+type EngineEvent = {
+  type?: string;
+  data?: { sessionID?: string } & Record<string, unknown>;
+};
+
+function parseModel(model: string): { providerID: string; id: string } {
   const slash = model.indexOf("/");
   if (slash === -1) {
-    return { providerID: "openai", modelID: model };
+    return { providerID: "openai", id: model };
   }
   return {
     providerID: model.slice(0, slash),
-    modelID: model.slice(slash + 1),
+    id: model.slice(slash + 1),
   };
 }
 
@@ -22,15 +28,8 @@ function isAbortError(err: unknown): boolean {
   return err instanceof Error && err.name === "AbortError";
 }
 
-function isConnectionRefused(err: unknown): boolean {
-  if (!(err instanceof Error)) {
-    return false;
-  }
-  const cause = (err as Error & { cause?: { code?: string } }).cause;
-  if (cause?.code === "ECONNREFUSED") {
-    return true;
-  }
-  return /ECONNREFUSED|fetch failed/i.test(err.message);
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 export class OpenCodeEngine implements AgentEngine {
@@ -38,19 +37,23 @@ export class OpenCodeEngine implements AgentEngine {
   private client;
   private listeners = new Set<(event: AgentEvent) => void>();
   private eventAbort?: AbortController;
-  private streamLoopRunning = false;
+  private eventLoopRunning = false;
   private sessionToTask = new Map<string, string>();
 
   constructor(private profile: K2soProfile) {
-    this.client = createOpencodeClient({
+    // Ensure the password exists before any request or spawn so daemon,
+    // supervisor, and dashboard all share the same credential.
+    const password = ensureServerPassword(profile.daemon.state);
+    this.client = OpenCode.make({
       baseUrl: profile.engine.opencode_url,
+      headers: opencodeHeaders(password),
     });
   }
 
   async isReady(): Promise<boolean> {
     try {
-      const res = await fetch(`${this.profile.engine.opencode_url}/global/health`);
-      return res.ok;
+      const info = await this.client.server.info();
+      return typeof info.version === "string";
     } catch {
       return false;
     }
@@ -60,15 +63,13 @@ export class OpenCodeEngine implements AgentEngine {
     const taskId = opts.taskId;
     const title = instruction.trim().slice(0, 80) || "K-2SO task";
     const session = await this.client.session.create({
-      body: { title, parentID: opts.parentSessionId },
+      title,
+      ...(opts.parentSessionId ? { parentID: opts.parentSessionId } : {}),
+      agent: opts.agent ?? this.profile.agent.name,
+      model: parseModel(opts.model ?? this.profile.agent.default_model),
+      location: { directory: this.taskWorkspace(taskId) },
     });
-    if (session.error) {
-      throw new Error(`OpenCode session.create failed: ${sdkErrorMessage(session.error)}`);
-    }
-    const sessionId = session.data?.id;
-    if (!sessionId) {
-      throw new Error("OpenCode session.create did not return a session id");
-    }
+    const sessionId = session.id;
 
     this.sessionToTask.set(sessionId, taskId);
     this.emit({
@@ -78,74 +79,24 @@ export class OpenCodeEngine implements AgentEngine {
       data: { status: "running", sessionId },
     });
 
-    const model = opts.model ?? this.profile.agent.default_model;
-    const { providerID, modelID } = parseModel(model);
-    const agent = opts.agent ?? this.profile.agent.name;
     const promptText = await assemblePromptForTask(this.profile, instruction);
 
-    void this.client.session
-      .prompt({
-        path: { id: sessionId },
-        body: {
-          agent,
-          model: { providerID, modelID },
-          parts: [{ type: "text", text: promptText }],
-        },
-      })
-      .then((res) => {
-        // The SDK resolves (does not throw) on HTTP errors — check the payload.
-        if (res.error) {
-          this.emit({
-            type: "error",
-            taskId,
-            at: new Date().toISOString(),
-            data: {
-              message: `OpenCode rejected the prompt: ${sdkErrorMessage(res.error)}`,
-            },
-          });
-          return;
-        }
-
-        // Done means a response exists — never report done with nothing to show.
-        const text = extractAssistantText(
-          (res.data?.parts ?? []) as Array<{ type?: string; text?: string }>,
-        ).trim();
-        if (!text) {
-          this.emit({
-            type: "error",
-            taskId,
-            at: new Date().toISOString(),
-            data: { message: "OpenCode finished the task without any assistant text" },
-          });
-          return;
-        }
-
-        this.emit({
-          type: "done",
-          taskId,
-          at: new Date().toISOString(),
-          data: { sessionId },
-        });
-      })
-      .catch((err: unknown) => {
-        this.emit({
-          type: "error",
-          taskId,
-          at: new Date().toISOString(),
-          data: { message: err instanceof Error ? err.message : String(err) },
-        });
-      });
+    void this.runPrompt(taskId, sessionId, promptText);
 
     return { id: taskId, sessionId };
   }
 
   async abort(_taskId: string, sessionId: string): Promise<void> {
-    await this.client.session.abort({ path: { id: sessionId } });
+    try {
+      await this.client.session.interrupt({ sessionID: sessionId });
+    } catch (err) {
+      console.warn("k2so: session interrupt failed:", errorMessage(err));
+    }
   }
 
   subscribe(onEvent: (event: AgentEvent) => void): Unsubscribe {
     this.listeners.add(onEvent);
-    if (!this.streamLoopRunning) {
+    if (!this.eventLoopRunning) {
       void this.startEventStream();
     }
     return () => {
@@ -157,20 +108,61 @@ export class OpenCodeEngine implements AgentEngine {
     };
   }
 
+  private taskWorkspace(taskId: string): string {
+    return `${this.profile.daemon.workspace}/${taskId}`;
+  }
+
   private emit(event: AgentEvent): void {
     for (const listener of this.listeners) {
       listener(event);
     }
   }
 
+  /**
+   * Prompt, wait for the agent loop to go idle, then verify a response exists.
+   * The v2 prompt endpoint admits input asynchronously; completion is the
+   * session.wait call, and the response is read from the message log.
+   */
+  private async runPrompt(taskId: string, sessionId: string, promptText: string): Promise<void> {
+    try {
+      await this.client.session.prompt({ sessionID: sessionId, text: promptText });
+      await this.client.session.wait({ sessionID: sessionId });
+
+      const messages = await fetchSessionMessages(this.profile, sessionId);
+      const response = extractLastAssistantResponse(messages).trim();
+      if (!response) {
+        this.emit({
+          type: "error",
+          taskId,
+          at: new Date().toISOString(),
+          data: { message: "OpenCode finished the task without any assistant text" },
+        });
+        return;
+      }
+
+      this.emit({
+        type: "done",
+        taskId,
+        at: new Date().toISOString(),
+        data: { sessionId },
+      });
+    } catch (err) {
+      this.emit({
+        type: "error",
+        taskId,
+        at: new Date().toISOString(),
+        data: { message: errorMessage(err) },
+      });
+    }
+  }
+
   private async startEventStream(): Promise<void> {
-    if (this.streamLoopRunning) {
+    if (this.eventLoopRunning) {
       return;
     }
-    this.streamLoopRunning = true;
+    this.eventLoopRunning = true;
 
-    const url = `${this.profile.engine.opencode_url}/event`;
-    let backoffMs = SSE_BACKOFF_MS;
+    let backoffMs = EVENT_RETRY_MS;
     let waitingLogged = false;
 
     while (this.listeners.size > 0) {
@@ -179,57 +171,24 @@ export class OpenCodeEngine implements AgentEngine {
       let established = false;
 
       try {
-        const res = await fetch(url, {
-          headers: { Accept: "text/event-stream" },
-          signal,
-        });
-        if (!res.ok || !res.body) {
-          throw new Error(`event stream HTTP ${res.status || "no body"}`);
-        }
-
-        established = true;
-        backoffMs = SSE_BACKOFF_MS;
-        if (waitingLogged) {
-          console.log("k2so: event stream connected");
-          waitingLogged = false;
-        }
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (this.listeners.size > 0) {
-          const { done, value } = await reader.read();
-          if (done) {
-            break;
+        for await (const event of this.client.event.subscribe({ signal })) {
+          if (!established) {
+            established = true;
+            backoffMs = EVENT_RETRY_MS;
+            if (waitingLogged) {
+              console.log("k2so: event stream connected");
+              waitingLogged = false;
+            }
           }
-          buffer += decoder.decode(value, { stream: true });
-          const chunks = buffer.split("\n\n");
-          buffer = chunks.pop() ?? "";
-
-          for (const chunk of chunks) {
-            this.handleSseChunk(chunk);
-          }
+          this.handleEngineEvent(event as EngineEvent);
         }
       } catch (err) {
         if (isAbortError(err) || signal.aborted) {
           break;
         }
-        if (isConnectionRefused(err)) {
-          if (!waitingLogged) {
-            console.warn("k2so: waiting for OpenCode event stream…");
-            waitingLogged = true;
-          }
-        } else if (established) {
-          console.warn(
-            "k2so: event stream ended, reconnecting:",
-            err instanceof Error ? err.message : String(err),
-          );
-        } else {
-          console.warn(
-            "k2so: event stream connect failed, retrying:",
-            err instanceof Error ? err.message : String(err),
-          );
+        if (!established && !waitingLogged) {
+          console.warn("k2so: waiting for OpenCode event stream…");
+          waitingLogged = true;
         }
       }
 
@@ -238,10 +197,10 @@ export class OpenCodeEngine implements AgentEngine {
       }
 
       await new Promise((r) => setTimeout(r, backoffMs));
-      backoffMs = Math.min(backoffMs * 2, SSE_BACKOFF_MAX_MS);
+      backoffMs = Math.min(backoffMs * 2, EVENT_RETRY_MAX_MS);
     }
 
-    this.streamLoopRunning = false;
+    this.eventLoopRunning = false;
     this.eventAbort = undefined;
     // A listener may have re-subscribed while we were exiting.
     if (this.listeners.size > 0) {
@@ -249,55 +208,44 @@ export class OpenCodeEngine implements AgentEngine {
     }
   }
 
-  private handleSseChunk(chunk: string): void {
-    const dataLine = chunk.split("\n").find((line) => line.startsWith("data: "));
-    if (!dataLine) {
+  private handleEngineEvent(event: EngineEvent): void {
+    const data = event.data;
+    const sessionId = data?.sessionID;
+    if (!sessionId) {
       return;
     }
+    const taskId = this.sessionToTask.get(sessionId);
+    if (!taskId) {
+      return;
+    }
+    const at = new Date().toISOString();
 
-    try {
-      const payload = JSON.parse(dataLine.slice(6)) as {
-        type?: string;
-        properties?: {
-          sessionID?: string;
-          part?: { type?: string; tool?: string; sessionID?: string };
-        };
-      };
-      const part = payload.properties?.part;
-      // OpenCode may put sessionID on properties (schema v1) or only on the part (SDK EventMessagePartUpdated).
-      const sessionId = payload.properties?.sessionID ?? part?.sessionID;
-      if (!sessionId) {
+    switch (event.type) {
+      case "session.text.delta":
+        if (typeof data.delta === "string" && data.delta) {
+          this.emit({ type: "message", taskId, at, data: { type: "text", text: data.delta } });
+        }
+        return;
+      case "session.text.ended":
+        if (typeof data.text === "string" && data.text) {
+          this.emit({ type: "message", taskId, at, data: { type: "text", text: data.text } });
+        }
+        return;
+      case "session.reasoning.delta":
+      case "session.reasoning.ended": {
+        const text = (data.delta ?? data.text) as string | undefined;
+        if (text) {
+          this.emit({ type: "message", taskId, at, data: { type: "reasoning", text } });
+        }
         return;
       }
-      const taskId = this.sessionToTask.get(sessionId);
-      if (!taskId) {
+      case "session.tool.called":
+      case "session.tool.success":
+      case "session.tool.failed":
+        this.emit({ type: "tool", taskId, at, data: { type: "tool", tool: data.id ?? data.tool } });
         return;
-      }
-
-      if (payload.type !== "message.part.updated" || !part) {
+      default:
         return;
-      }
-
-      if (part.type === "tool") {
-        this.emit({
-          type: "tool",
-          taskId,
-          at: new Date().toISOString(),
-          data: part,
-        });
-        return;
-      }
-
-      if (part.type === "text" || part.type === "reasoning") {
-        this.emit({
-          type: "message",
-          taskId,
-          at: new Date().toISOString(),
-          data: part,
-        });
-      }
-    } catch {
-      // ignore malformed SSE payloads
     }
   }
 }

@@ -240,6 +240,15 @@ export class TaskManager {
       return;
     }
 
+    // Ignore late terminal engine events for tasks already finalized
+    // (e.g. done/error arriving after a user abort).
+    if (
+      (event.type === "done" || event.type === "error") &&
+      (task.status === "done" || task.status === "failed" || task.status === "aborted")
+    ) {
+      return;
+    }
+
     task.events.push(event);
     task.updatedAt = event.at;
 
@@ -288,7 +297,7 @@ export class TaskManager {
     }
 
     try {
-      const response = await fetchTaskResponse(this.profile.engine.opencode_url, task.sessionId);
+      const response = await fetchTaskResponse(this.profile, task.sessionId);
       if (!response.trim()) {
         return;
       }

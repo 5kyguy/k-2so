@@ -1,12 +1,11 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { createOpencodeClient } from "@opencode-ai/sdk";
 import type { K2soProfile } from "../config.js";
 import type { TaskRecord } from "../engine/interface.js";
 import { memoryAppend, readLearnedBullets, replaceLearnedBullets, skillCreate, userProfileUpdate } from "./writers.js";
 import { loadMemory, loadUser } from "./loaders.js";
 import { resolveMemoryPaths } from "./paths.js";
-import { extractAssistantText, fetchSessionMessages, formatTranscript } from "./transcript.js";
+import { fetchSessionMessages, formatTranscript, runOneShotPrompt } from "./transcript.js";
 
 const REFLECTION_SYSTEM = `You are K-2SO's reflection subroutine. Given a completed task transcript
 and the current USER.md / MEMORY.md, decide what (if anything) is worth remembering.
@@ -40,14 +39,14 @@ interface ReflectionLogEntry {
   error?: string;
 }
 
-function parseModel(model: string): { providerID: string; modelID: string } {
+function parseModel(model: string): { providerID: string; id: string } {
   const slash = model.indexOf("/");
   if (slash === -1) {
-    return { providerID: "openai", modelID: model };
+    return { providerID: "openai", id: model };
   }
   return {
     providerID: model.slice(0, slash),
-    modelID: model.slice(slash + 1),
+    id: model.slice(slash + 1),
   };
 }
 
@@ -103,7 +102,6 @@ async function applyReflection(result: ReflectionResult): Promise<ReflectionLogE
 
 async function maybeCompactUser(
   profile: K2soProfile,
-  client: ReturnType<typeof createOpencodeClient>,
   model: string,
 ): Promise<{ before: number; after: number } | undefined> {
   const threshold = profile.memory?.compact_user_threshold;
@@ -116,26 +114,13 @@ async function maybeCompactUser(
     return undefined;
   }
 
-  const { providerID, modelID } = parseModel(model);
-  const session = await client.session.create({
-    body: { title: `k2so-compact-user-${Date.now()}` },
-  });
-  const sessionId = session.data?.id;
-  if (!sessionId) {
-    throw new Error("compaction session.create did not return a session id");
-  }
-
   const prompt = ["## Current USER.md Learned bullets", ...before.map((b) => `- ${b}`)].join("\n");
-  const res = await client.session.prompt({
-    path: { id: sessionId },
-    body: {
-      model: { providerID, modelID },
-      system: COMPACTION_SYSTEM,
-      parts: [{ type: "text", text: prompt }],
-    },
+  const text = await runOneShotPrompt(profile, {
+    title: `k2so-compact-user-${Date.now()}`,
+    system: COMPACTION_SYSTEM,
+    text: prompt,
+    model: parseModel(model),
   });
-
-  const text = extractAssistantText(res.data?.parts ?? []);
   if (!text.trim()) {
     return undefined;
   }
@@ -169,8 +154,7 @@ async function runReflection(task: TaskRecord, profile: K2soProfile): Promise<vo
   }
 
   try {
-    const client = createOpencodeClient({ baseUrl: profile.engine.opencode_url });
-    const messages = await fetchSessionMessages(profile.engine.opencode_url, task.sessionId);
+    const messages = await fetchSessionMessages(profile, task.sessionId);
     const transcript = formatTranscript(messages);
 
     const memoryPaths = resolveMemoryPaths(profile);
@@ -186,25 +170,12 @@ async function runReflection(task: TaskRecord, profile: K2soProfile): Promise<vo
       memoryDoc.trim() || "(empty)",
     ].join("\n\n");
 
-    const reflectSession = await client.session.create({
-      body: { title: `k2so-reflect-${task.id.slice(0, 8)}` },
+    const assistantText = await runOneShotPrompt(profile, {
+      title: `k2so-reflect-${task.id.slice(0, 8)}`,
+      system: REFLECTION_SYSTEM,
+      text: userPrompt,
+      model: parseModel(model),
     });
-    const reflectSessionId = reflectSession.data?.id;
-    if (!reflectSessionId) {
-      throw new Error("reflection session.create did not return a session id");
-    }
-
-    const { providerID, modelID } = parseModel(model);
-    const promptRes = await client.session.prompt({
-      path: { id: reflectSessionId },
-      body: {
-        model: { providerID, modelID },
-        system: REFLECTION_SYSTEM,
-        parts: [{ type: "text", text: userPrompt }],
-      },
-    });
-
-    const assistantText = extractAssistantText(promptRes.data?.parts ?? []);
     if (!assistantText.trim()) {
       await appendReflectionLog(profile, { ...baseEntry, error: "empty reflection response" });
       return;
@@ -215,7 +186,7 @@ async function runReflection(task: TaskRecord, profile: K2soProfile): Promise<vo
 
     let compaction: { before: number; after: number } | undefined;
     if (applied.user > 0) {
-      compaction = await maybeCompactUser(profile, client, model).catch((err) => {
+      compaction = await maybeCompactUser(profile, model).catch((err) => {
         console.error("k2so: user compaction failed:", err);
         return undefined;
       });

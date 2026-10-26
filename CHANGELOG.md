@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 GitHub Releases for each version are published from the matching section below;
 see the [Releases page](https://github.com/5kyguy/k-2so/releases).
 
+## [0.1.6] - 2026-10-26
+
+### Fixed
+
+- **OpenCode v2 engine support.** OpenCode v2 replaced the v1 server API, which
+  silently broke task submission (the engine talked to v1 endpoints that no
+  longer exist; tasks failed with `session.create` errors). The engine now uses
+  `@opencode/client` against the v2 HTTP API: sessions are created per task
+  workspace, prompts complete via `session.wait`, responses are read from the
+  v2 message log, aborts use `session.interrupt`, and live timeline events map
+  from the v2 event stream. The supervisor pins the spawned server's password
+  via `OPENCODE_SERVER_PASSWORD` (persisted at `~/.local/state/k2so/server-password`,
+  mode 600) and authenticates with HTTP Basic auth, so the daemon and dashboard
+  share one credential. `k2so doctor` now requires OpenCode v2+.
+
 ## [0.1.5] - 2026-10-26
 
 ### Added
@@ -104,6 +119,7 @@ see the [Releases page](https://github.com/5kyguy/k-2so/releases).
 - **Session chaining.** `k2so ask --continue <task-id>` chains on a prior task's
   session.
 
+[0.1.6]: https://github.com/5kyguy/k-2so/releases/tag/v0.1.6
 [0.1.5]: https://github.com/5kyguy/k-2so/releases/tag/v0.1.5
 [0.1.3]: https://github.com/5kyguy/k-2so/releases/tag/v0.1.3
 [0.1.2]: https://github.com/5kyguy/k-2so/releases/tag/v0.1.2

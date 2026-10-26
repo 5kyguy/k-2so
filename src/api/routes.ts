@@ -46,7 +46,7 @@ export function createApi(manager: TaskManager, webRoot: string, profile: K2soPr
       return c.json({ response: "", source: "none" as const });
     }
     try {
-      const response = await fetchTaskResponse(profile.engine.opencode_url, task.sessionId);
+      const response = await fetchTaskResponse(profile, task.sessionId);
       return c.json({
         response,
         source: response.trim() ? ("opencode" as const) : ("none" as const),

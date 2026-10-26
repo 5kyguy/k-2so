@@ -58,7 +58,7 @@ async function printTask(task: TaskRecord): Promise<void> {
   if (!response && task.sessionId) {
     try {
       const profile = await loadProfile();
-      response = (await fetchTaskResponse(profile.engine.opencode_url, task.sessionId)).trim();
+      response = (await fetchTaskResponse(profile, task.sessionId)).trim();
       if (response) {
         console.log("(fetched from OpenCode session — not yet stored on task)\n");
       }
