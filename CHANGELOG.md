@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 GitHub Releases for each version are published from the matching section below;
 see the [Releases page](https://github.com/5kyguy/k-2so/releases).
 
-## [Unreleased]
+## [0.1.5] - 2026-10-26
 
 ### Added
 
@@ -104,6 +104,7 @@ see the [Releases page](https://github.com/5kyguy/k-2so/releases).
 - **Session chaining.** `k2so ask --continue <task-id>` chains on a prior task's
   session.
 
+[0.1.5]: https://github.com/5kyguy/k-2so/releases/tag/v0.1.5
 [0.1.3]: https://github.com/5kyguy/k-2so/releases/tag/v0.1.3
 [0.1.2]: https://github.com/5kyguy/k-2so/releases/tag/v0.1.2
 [0.1.1]: https://github.com/5kyguy/k-2so/releases/tag/v0.1.1
