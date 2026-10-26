@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 GitHub Releases for each version are published from the matching section below;
 see the [Releases page](https://github.com/5kyguy/k-2so/releases).
 
+## [0.1.8] - 2026-10-26
+
+### Fixed
+
+- **Memory MCP now loads from npm installs.** The `k2so-memory` MCP server
+  crashed on start (`Cannot find package '@modelcontextprotocol/sdk'`) because
+  the `mcp/memory` subpackage's dependencies were never published — npm strips
+  nested `node_modules`, and only `mcp/memory/dist` shipped. The MCP's runtime
+  dependencies (`@modelcontextprotocol/sdk`, `smol-toml`, `zod`) are now root
+  dependencies, so they install alongside the CLI and resolve from the
+  subpackage bundle.
+
 ## [0.1.7] - 2026-10-26
 
 ### Fixed
@@ -130,6 +142,7 @@ see the [Releases page](https://github.com/5kyguy/k-2so/releases).
 - **Session chaining.** `k2so ask --continue <task-id>` chains on a prior task's
   session.
 
+[0.1.8]: https://github.com/5kyguy/k-2so/releases/tag/v0.1.8
 [0.1.7]: https://github.com/5kyguy/k-2so/releases/tag/v0.1.7
 [0.1.6]: https://github.com/5kyguy/k-2so/releases/tag/v0.1.6
 [0.1.5]: https://github.com/5kyguy/k-2so/releases/tag/v0.1.5
