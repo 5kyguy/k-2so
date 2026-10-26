@@ -19,6 +19,15 @@ see the [Releases page](https://github.com/5kyguy/k-2so/releases).
 
 ### Fixed
 
+- **Failed prompts no longer show as done.** The OpenCode SDK resolves instead of
+  throwing on HTTP errors, so a rejected `session.prompt` (e.g. the `k2so` agent
+  missing from `~/.config/opencode/agents/`, or an unknown model) was reported as
+  a **done** task with no response. K-2SO now checks the SDK result of
+  `session.create`, `session.prompt`, and `session.messages`: a rejected prompt
+  marks the task **failed** with the server's error message, and a run that
+  finishes without assistant text fails loudly instead of showing an empty
+  result. `k2so doctor` already flags a missing `agents/k2so.md`.
+
 - **OpenCode event stream reconnect.** The live Activity SSE now retries with
   backoff when OpenCode is down or the stream drops, instead of dying once on
   cold-start `ECONNREFUSED`. Daemon startup also brings OpenCode up before

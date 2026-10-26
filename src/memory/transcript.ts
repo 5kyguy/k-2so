@@ -54,12 +54,27 @@ export function formatTranscript(messages: TranscriptMessage[]): string {
   return truncate(lines.join("\n\n"), MAX_TRANSCRIPT_CHARS);
 }
 
+/** Human-readable message from a non-throwing OpenCode SDK error payload. */
+export function sdkErrorMessage(error: unknown): string {
+  const message = (error as { data?: { message?: string } } | undefined)?.data?.message;
+  if (message) {
+    return message;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
 export async function fetchSessionMessages(
   opencodeUrl: string,
   sessionId: string,
 ): Promise<TranscriptMessage[]> {
   const client = createOpencodeClient({ baseUrl: opencodeUrl });
   const messagesRes = await client.session.messages({ path: { id: sessionId } });
+  if (messagesRes.error) {
+    throw new Error(`OpenCode session.messages failed: ${sdkErrorMessage(messagesRes.error)}`);
+  }
   return (messagesRes.data ?? []) as TranscriptMessage[];
 }
 

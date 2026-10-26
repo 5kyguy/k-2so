@@ -1,6 +1,7 @@
 import { createOpencodeClient } from "@opencode-ai/sdk";
 import type { K2soProfile } from "../config.js";
 import { assemblePromptForTask } from "../memory/assemble.js";
+import { extractAssistantText, sdkErrorMessage } from "../memory/transcript.js";
 import type { AgentEngine, AgentEvent, TaskHandle, TaskOpts, Unsubscribe } from "./interface.js";
 
 const SSE_BACKOFF_MS = 500;
@@ -61,6 +62,9 @@ export class OpenCodeEngine implements AgentEngine {
     const session = await this.client.session.create({
       body: { title, parentID: opts.parentSessionId },
     });
+    if (session.error) {
+      throw new Error(`OpenCode session.create failed: ${sdkErrorMessage(session.error)}`);
+    }
     const sessionId = session.data?.id;
     if (!sessionId) {
       throw new Error("OpenCode session.create did not return a session id");
@@ -88,7 +92,34 @@ export class OpenCodeEngine implements AgentEngine {
           parts: [{ type: "text", text: promptText }],
         },
       })
-      .then(() => {
+      .then((res) => {
+        // The SDK resolves (does not throw) on HTTP errors — check the payload.
+        if (res.error) {
+          this.emit({
+            type: "error",
+            taskId,
+            at: new Date().toISOString(),
+            data: {
+              message: `OpenCode rejected the prompt: ${sdkErrorMessage(res.error)}`,
+            },
+          });
+          return;
+        }
+
+        // Done means a response exists — never report done with nothing to show.
+        const text = extractAssistantText(
+          (res.data?.parts ?? []) as Array<{ type?: string; text?: string }>,
+        ).trim();
+        if (!text) {
+          this.emit({
+            type: "error",
+            taskId,
+            at: new Date().toISOString(),
+            data: { message: "OpenCode finished the task without any assistant text" },
+          });
+          return;
+        }
+
         this.emit({
           type: "done",
           taskId,
